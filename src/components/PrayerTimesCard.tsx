@@ -284,7 +284,6 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
           </div>
         </div>
       </div>
-      </div>
 
       {/* Feature Card: Background Full Adhan Playback */}
       <BackgroundAdhanCard

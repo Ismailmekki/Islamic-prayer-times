@@ -221,6 +221,7 @@ export default function App() {
           <QiblaCompass
             location={location}
             onOpenLocationModal={() => setIsLocationModalOpen(true)}
+            onUpdateLocation={(newLoc) => setLocation(newLoc)}
           />
         )}
 
