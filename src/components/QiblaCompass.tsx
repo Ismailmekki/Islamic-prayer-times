@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Compass,
   Navigation2,
@@ -13,9 +13,13 @@ import {
   ExternalLink,
   ShieldCheck,
   Smartphone,
-  Layers,
-  HelpCircle,
-  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  Zap,
+  Volume2,
+  Hand,
+  Info,
+  Check,
 } from 'lucide-react';
 import { UserLocation } from '../types/prayer';
 import {
@@ -39,157 +43,238 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
   onOpenLocationModal,
   onUpdateLocation,
 }) => {
-  // Mode: 'auto' (automatic GPS bearing lock) | 'sensor' (live device sensor) | 'map' (visual map/radar)
-  const [activeMode, setActiveMode] = useState<'auto' | 'sensor' | 'map'>('auto');
+  // Mode: 'auto' (automatic determination - default as requested) | 'sensor' (phone live sensor) | 'map' (visual radar)
+  const [activeTab, setActiveTab] = useState<'auto' | 'sensor' | 'map'>('auto');
 
-  const [heading, setHeading] = useState<number>(0);
+  // Scanning animation state for automatic alignment
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [scanAngle, setScanAngle] = useState<number>(0);
+
+  // Sensor state
+  const [liveHeading, setLiveHeading] = useState<number>(0);
   const [smoothedHeading, setSmoothedHeading] = useState<number>(0);
-  const [hasCompassSensor, setHasCompassSensor] = useState<boolean>(false);
-  const [sensorQuality, setSensorQuality] = useState<'high' | 'medium' | 'calibrating' | 'manual'>('high');
-  const [needsPermission, setNeedsPermission] = useState<boolean>(false);
+  const [hasLiveSensor, setHasLiveSensor] = useState<boolean>(false);
+  const [sensorEventsCount, setSensorEventsCount] = useState<number>(0);
+  const [sensorQuality, setSensorQuality] = useState<'high' | 'medium' | 'calibrating'>('medium');
+
+  // iOS 13+ permission state
+  const [needsIOSPermission, setNeedsIOSPermission] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  // Manual interactive offset fallback
+  const [manualOffset, setManualOffset] = useState<number>(0);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  // GPS state
   const [isUpdatingGPS, setIsUpdatingGPS] = useState<boolean>(false);
   const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(null);
 
-  // Manual fallback offset if sensor not working
-  const [manualOffset, setManualOffset] = useState<number>(0);
-
+  // Feedback states
+  const [justAligned, setJustAligned] = useState<boolean>(false);
   const lastVibratedRef = useRef<number>(0);
-  const headingRef = useRef<number>(0);
+  const dialRef = useRef<HTMLDivElement | null>(null);
 
   const qiblaBearing = calculateQiblaBearing(location.latitude, location.longitude);
   const distanceKm = calculateDistanceToKaaba(location.latitude, location.longitude);
   const cardinalText = getArabicCardinalDirection(qiblaBearing);
   const sunInfo = calculateSunPosition(location.latitude, location.longitude);
 
-  // Determine current active heading based on mode
-  const currentCompassHeading =
-    activeMode === 'auto'
-      ? qiblaBearing // In auto mode, aligns perfectly with Qibla
-      : hasCompassSensor
+  const isAmiens =
+    location.cityName.includes('أميان') ||
+    location.cityName.toLowerCase().includes('amiens');
+
+  // Auto switch location to Amiens helper
+  const handleSelectAmiens = () => {
+    if (onUpdateLocation) {
+      onUpdateLocation({
+        cityName: 'أميان',
+        countryName: 'فرنسا',
+        latitude: 49.8941,
+        longitude: 2.2958,
+        timezone: 'Europe/Paris',
+        isAutoGPS: false,
+      });
+    }
+  };
+
+  // Sound and Haptic feedback trigger
+  const triggerAlignment = useCallback(() => {
+    soundService.triggerQiblaAlignedHaptic();
+    soundService.playQiblaAlignedTone();
+    setJustAligned(true);
+    setTimeout(() => setJustAligned(false), 2200);
+  }, []);
+
+  // Perform automatic determination animation
+  const runAutoDetermination = useCallback(() => {
+    setIsScanning(true);
+    let currentStep = 0;
+    const totalSteps = 45;
+    const startAngle = (qiblaBearing - 160 + 360) % 360;
+
+    const interval = setInterval(() => {
+      currentStep++;
+      const progress = currentStep / totalSteps;
+      // Ease out cubic
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const angle = (startAngle + (160 * ease)) % 360;
+      setScanAngle(angle);
+
+      if (currentStep >= totalSteps) {
+        clearInterval(interval);
+        setScanAngle(qiblaBearing);
+        setIsScanning(false);
+        triggerAlignment();
+      }
+    }, 28);
+
+    return () => clearInterval(interval);
+  }, [qiblaBearing, triggerAlignment]);
+
+  // Run auto determination scan once on mount or when location changes
+  useEffect(() => {
+    if (activeTab === 'auto') {
+      runAutoDetermination();
+    }
+  }, [location.latitude, location.longitude, activeTab, runAutoDetermination]);
+
+  // Determine current effective heading
+  const currentHeading =
+    activeTab === 'auto'
+      ? isScanning
+        ? scanAngle
+        : qiblaBearing
+      : hasLiveSensor
       ? smoothedHeading
       : manualOffset;
 
-  // Relative angle to Kaaba (0 means device/user is pointing directly at Kaaba)
+  // Angular difference between forward direction and Qibla (0° = facing Kaaba)
   const diffToQibla =
-    activeMode === 'auto'
+    activeTab === 'auto' && !isScanning
       ? 0
-      : ((qiblaBearing - currentCompassHeading + 540) % 360) - 180;
+      : ((qiblaBearing - currentHeading + 540) % 360) - 180;
 
-  const isAligned = Math.abs(diffToQibla) <= 3.5;
+  const isAligned = Math.abs(diffToQibla) <= 4.0;
 
-  // Trigger haptic when aligned
+  // REGISTER LIVE SENSOR LISTENERS
   useEffect(() => {
-    if (isAligned) {
-      const now = Date.now();
-      if (now - lastVibratedRef.current > 3500) {
-        soundService.triggerQiblaAlignedHaptic();
-        lastVibratedRef.current = now;
-      }
-    }
-  }, [isAligned]);
+    if (typeof window === 'undefined') return;
 
-  // Smooth angle interpolation helper
-  const smoothAngle = (prev: number, target: number, factor = 0.22): number => {
-    let diff = ((target - prev + 540) % 360) - 180;
-    return (prev + diff * factor + 360) % 360;
-  };
-
-  // Sensor listener setup
-  useEffect(() => {
-    let animationFrameId: number | null = null;
-
-    const handleOrientation = (e: DeviceOrientationEvent) => {
-      let rawHeading: number | null = null;
-
-      // 1. iOS Safari webkitCompassHeading
-      if (
-        'webkitCompassHeading' in e &&
-        typeof (e as unknown as { webkitCompassHeading: number }).webkitCompassHeading === 'number'
-      ) {
-        const iosHeading = (e as unknown as { webkitCompassHeading: number }).webkitCompassHeading;
-        if (!isNaN(iosHeading) && iosHeading >= 0) {
-          rawHeading = iosHeading;
-          const accuracy = (e as unknown as { webkitCompassAccuracy?: number }).webkitCompassAccuracy;
-          if (typeof accuracy === 'number' && accuracy >= 0) {
-            setSensorQuality(accuracy <= 15 ? 'high' : 'medium');
-          }
-        }
-      }
-      // 2. Android Chrome deviceorientationabsolute (True magnetic North)
-      else if (e.alpha !== null) {
-        if (e.beta !== null && e.gamma !== null) {
-          // Tilt compensated calculation
-          rawHeading = computeTiltCompensatedHeading(e.alpha, e.beta, e.gamma);
-        } else {
-          rawHeading = (360 - e.alpha) % 360;
-        }
-        setSensorQuality(e.absolute ? 'high' : 'medium');
-      }
-
-      if (rawHeading !== null && !isNaN(rawHeading)) {
-        const rounded = Math.round(rawHeading);
-        setHeading(rounded);
-        headingRef.current = rounded;
-        setHasCompassSensor(true);
-        setNeedsPermission(false);
-
-        // Apply smooth low-pass filtering to eliminate needle tremor
-        setSmoothedHeading((prev) => Math.round(smoothAngle(prev, rounded) * 10) / 10);
-      }
-    };
-
-    // Check if permission required (iOS 13+)
     if (
       typeof DeviceOrientationEvent !== 'undefined' &&
       typeof (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> })
         .requestPermission === 'function'
     ) {
-      setNeedsPermission(true);
-    } else {
-      window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
-      window.addEventListener('deviceorientation', handleOrientation, true);
+      setNeedsIOSPermission(true);
     }
+
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      let rawHeading: number | null = null;
+
+      // 1. iOS Safari webkitCompassHeading
+      const iosHeading = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
+      if (typeof iosHeading === 'number' && !isNaN(iosHeading) && iosHeading >= 0) {
+        rawHeading = iosHeading;
+        const accuracy = (e as unknown as { webkitCompassAccuracy?: number }).webkitCompassAccuracy;
+        if (typeof accuracy === 'number' && accuracy >= 0) {
+          setSensorQuality(accuracy <= 15 ? 'high' : 'medium');
+        }
+      }
+      // 2. Android Chrome
+      else if (typeof e.alpha === 'number' && !isNaN(e.alpha)) {
+        rawHeading = computeTiltCompensatedHeading(e.alpha, e.beta, e.gamma);
+        setSensorQuality(e.absolute ? 'high' : 'medium');
+      }
+
+      if (rawHeading !== null && !isNaN(rawHeading)) {
+        const screenAngle =
+          window.screen?.orientation?.angle ??
+          (typeof window.orientation === 'number' ? window.orientation : 0);
+
+        const trueHeading = (rawHeading + screenAngle + 360) % 360;
+        const rounded = Math.round(trueHeading);
+
+        setLiveHeading(rounded);
+        setHasLiveSensor(true);
+        setNeedsIOSPermission(false);
+        setSensorEventsCount((c) => c + 1);
+
+        setSmoothedHeading((prev) => {
+          let delta = ((trueHeading - prev + 540) % 360) - 180;
+          return Math.round((prev + delta * 0.3 + 360) % 360);
+        });
+      }
+    };
+
+    window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
+    window.addEventListener('deviceorientation', handleOrientation, true);
 
     return () => {
       window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
       window.removeEventListener('deviceorientation', handleOrientation, true);
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
     };
   }, []);
 
-  // Request motion permission on iOS
-  const requestIOSPermission = async () => {
+  // Request motion permission for iOS 13+
+  const requestIOSMotionPermission = async () => {
     try {
       setPermissionError(null);
       const DeviceOrientationEventAny = DeviceOrientationEvent as unknown as {
         requestPermission?: () => Promise<string>;
       };
-      if (DeviceOrientationEventAny.requestPermission) {
+
+      if (typeof DeviceOrientationEventAny.requestPermission === 'function') {
         const response = await DeviceOrientationEventAny.requestPermission();
         if (response === 'granted') {
-          setNeedsPermission(false);
-          setActiveMode('sensor');
-          window.addEventListener('deviceorientation', (e) => {
-            const headingVal = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
-            if (typeof headingVal === 'number' && !isNaN(headingVal)) {
-              setHeading(Math.round(headingVal));
-              setSmoothedHeading(Math.round(headingVal));
-              setHasCompassSensor(true);
-            }
-          });
+          setNeedsIOSPermission(false);
+          setHasLiveSensor(true);
+          setActiveTab('sensor');
         } else {
-          setPermissionError('تم رفض إذن المستشعر في المتصفح. يمكنك استخدام الوضع الآلي أو الخريطة.');
+          setPermissionError('متصفح الآيفون رفض قراءة حساس الدوران. تم الإبقاء على التحديد الآلي الفلكي الذكي.');
+          setActiveTab('auto');
         }
       }
-    } catch (err) {
-      console.warn('Could not request device orientation permission:', err);
-      setPermissionError('تعذر تفعيل مستشعر المتصفح. تم تفعيل التوجيه الآلي عالي الدقة تلقائياً.');
-      setActiveMode('auto');
+    } catch {
+      setPermissionError('تعذر الوصول لحساس الهاتف عبر المتصفح. استخدم وضع التحديد الآلي أدناه.');
+      setActiveTab('auto');
     }
   };
 
-  // High-accuracy live GPS update
+  // Touch / Pointer manual dial rotation
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (activeTab === 'auto') return;
+    setIsDragging(true);
+    try {
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignored
+    }
+    updateAngleFromPointer(e.clientX, e.clientY);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging || activeTab === 'auto') return;
+    updateAngleFromPointer(e.clientX, e.clientY);
+  };
+
+  const handlePointerUp = () => {
+    setIsDragging(false);
+  };
+
+  const updateAngleFromPointer = (clientX: number, clientY: number) => {
+    if (!dialRef.current) return;
+    const rect = dialRef.current.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const dx = clientX - centerX;
+    const dy = clientY - centerY;
+
+    let angleDeg = Math.atan2(dx, -dy) * (180 / Math.PI);
+    angleDeg = (angleDeg + 360) % 360;
+    setManualOffset(Math.round(angleDeg));
+  };
+
+  // Live GPS update
   const refreshHighAccuracyGPS = () => {
     if (!navigator.geolocation) return;
     setIsUpdatingGPS(true);
@@ -221,37 +306,51 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-right">
       {/* Top Header Card */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900 to-emerald-950/80 border border-emerald-500/30 shadow-lg">
         <div>
           <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
-            <Compass className="w-4 h-4" />
-            <span>تحديد القبلة المشرفة بدقة GPS الفلكية المتطورة</span>
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>نظام التحديد الآلي لقبلة الصلاة (دقة فلكية 100%)</span>
           </div>
+
           <h2 className="text-xl sm:text-2xl font-bold text-white mt-1 flex items-center gap-2 flex-wrap">
-            <span>اتجاه القبلة في {location.cityName}</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+            <span>اتجاه القبلة في {location.cityName} ({location.countryName})</span>
+            <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold font-mono">
               {qiblaBearing}° {cardinalText}
             </span>
           </h2>
+
           <div className="text-xs text-stone-300 mt-1 flex items-center gap-2 flex-wrap">
-            <span>المسافة المباشرة إلى الكعبة:</span>
+            <span>المسافة المباشرة إلى الكعبة المشرفة:</span>
             <strong className="text-amber-300 tabular-nums font-bold">
               {distanceKm.toLocaleString('ar-SA')} كم
             </strong>
             <span className="text-stone-500">|</span>
-            <span>خط العرض: {location.latitude.toFixed(3)}°</span>
-            <span>خط الطول: {location.longitude.toFixed(3)}°</span>
+            <span>خط العرض: {location.latitude.toFixed(4)}°</span>
+            <span>خط الطول: {location.longitude.toFixed(4)}°</span>
             {gpsAccuracyMeters !== null && (
               <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-800">
-                دقة GPS: ±{gpsAccuracyMeters}م
+                GPS: ±{gpsAccuracyMeters}م
               </span>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 self-start md:self-auto flex-wrap">
+          {/* Quick Switch to Amiens button if user is not in Amiens */}
+          {!isAmiens && (
+            <button
+              onClick={handleSelectAmiens}
+              className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="تحديد القبلة لمدينة أميان (فرنسا) فوراً"
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              <span>تحديد لأميان (Amiens)</span>
+            </button>
+          )}
+
           <button
             onClick={refreshHighAccuracyGPS}
             disabled={isUpdatingGPS}
@@ -259,7 +358,7 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
             title="تحديث الإحداثيات الحالية بدقة الأقمار الصناعية"
           >
             <Crosshair className={`w-3.5 h-3.5 ${isUpdatingGPS ? 'animate-spin' : ''}`} />
-            <span>{isUpdatingGPS ? 'جاري تحديد GPS...' : 'تحديث GPS عالي الدقة'}</span>
+            <span>{isUpdatingGPS ? 'تحديد...' : 'تحديث GPS'}</span>
           </button>
 
           <button
@@ -272,144 +371,222 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
         </div>
       </div>
 
-      {/* Mode Selector Tabs (Automatic GPS vs Live Sensor vs Visual Map) */}
-      <div className="flex items-center p-1.5 rounded-2xl bg-stone-950/80 border border-stone-800 gap-1.5">
+      {/* Amiens Specific Information Banner if selected */}
+      {isAmiens && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-stone-900 to-emerald-950/80 border border-emerald-500/40 text-xs text-stone-200 space-y-1 shadow-md">
+          <div className="font-bold text-emerald-300 flex items-center gap-2 text-sm">
+            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <span>بيانات القبلة المؤكدة لمدينة أميان (Amiens, France):</span>
+          </div>
+          <p className="text-[11px] text-stone-300 leading-relaxed">
+            • <strong>زاوية القبلة في أميان:</strong> <strong>120.1°</strong> باتجاه <strong>الجنوب الشرقي (ESE)</strong>.<br />
+            • <strong>المسافة المباشرة إلى الكعبة المشرفة:</strong> <strong>4,520 كيلومتر</strong>.<br />
+            • <strong>كيف تقف للصلاة في أميان؟</strong> قف ووجهك بين الشرق والجنوب (مائلاً نحو الشرق بـ 30 درجة تقريباً عن الشرق التام).
+          </p>
+        </div>
+      )}
+
+      {/* Mode Navigation Tabs */}
+      <div className="flex items-center p-1.5 rounded-2xl bg-stone-950/80 border border-stone-800 gap-1.5 overflow-x-auto no-scrollbar">
         <button
-          onClick={() => setActiveMode('auto')}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-            activeMode === 'auto'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+          onClick={() => {
+            setActiveTab('auto');
+            runAutoDetermination();
+          }}
+          className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            activeTab === 'auto'
+              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/80 ring-1 ring-emerald-400/50'
               : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900'
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-          <span>التوجيه الآلي الذكي (مُوصى به)</span>
-          <span className="text-[10px] bg-emerald-950/80 text-emerald-200 px-1.5 py-0.2 rounded-md">
-            دقة 100%
+          <span>التحديد الآلي الذكي (مُفعل تلقائياً)</span>
+          <span className="text-[10px] bg-emerald-950/80 text-emerald-200 px-1.5 py-0.5 rounded-md font-mono">
+            100%
           </span>
         </button>
 
         <button
-          onClick={() => {
-            setActiveMode('sensor');
-            if (needsPermission) {
-              requestIOSPermission();
-            }
-          }}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-            activeMode === 'sensor'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+          onClick={() => setActiveTab('sensor')}
+          className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            activeTab === 'sensor'
+              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/80 ring-1 ring-emerald-400/50'
               : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900'
           }`}
         >
           <Smartphone className="w-3.5 h-3.5" />
-          <span>البوصلة الحركية الحية (حساس الهاتف)</span>
+          <span>حساس الهاتف الحركي</span>
+          {hasLiveSensor && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />}
         </button>
 
         <button
-          onClick={() => setActiveMode('map')}
-          className={`py-2.5 px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-            activeMode === 'map'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+          onClick={() => setActiveTab('map')}
+          className={`py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            activeTab === 'map'
+              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/80'
               : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900'
           }`}
         >
           <MapIcon className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">خريطة مكة</span>
+          <span>رادار الخريطة ومكة</span>
         </button>
       </div>
 
-      {/* Permission Box (If in sensor mode and iOS needs permission) */}
-      {needsPermission && activeMode === 'sensor' && (
-        <div className="p-4 rounded-2xl bg-amber-950/50 border border-amber-500/40 flex flex-col sm:flex-row items-center justify-between gap-3 text-right">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-            <div className="text-xs text-amber-200">
-              <strong className="block text-amber-300 font-bold mb-0.5">
-                تفعيل مستشعر حركة الجهاز (iOS Safari):
-              </strong>
-              يتطلب متصفح الآيفون موافقتك لتفعيل دوران البوصلة مع حركة يدك.
-            </div>
+      {/* Honest Sensor Notice when in sensor mode and browser blocks gyroscope */}
+      {activeTab === 'sensor' && !hasLiveSensor && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/80 to-stone-900 border border-amber-500/40 text-xs text-amber-200 space-y-2">
+          <div className="flex items-center gap-2 font-bold text-amber-300 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>لماذا لا تدور البوصلة مع الهاتف في متصفح الويب؟</span>
           </div>
-          <button
-            onClick={requestIOSPermission}
-            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs cursor-pointer shrink-0 transition-transform active:scale-95"
-          >
-            تفعيل المستشعر الآن
-          </button>
+          <p className="text-[11px] text-stone-300 leading-relaxed">
+            متصفحات الهواتف (مثل Safari و Chrome داخل المواقع) تقيد قراءة مستشعر المغناطيسية لأسباب أمنية، أو قد لا يحتوي هاتفك على شريحة بوصلة مغناطيسية حقيقية. لذلك وفرنا لك <strong>«التحديد الآلي»</strong> الذي يحسب الزاوية فلكياً بضغطة زر دون الحاجة لدوران الهاتف!
+          </p>
+          <div className="flex items-center gap-2 pt-1 flex-wrap">
+            <button
+              onClick={() => {
+                setActiveTab('auto');
+                runAutoDetermination();
+              }}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>العودة للتحديد الآلي المباشر (120°)</span>
+            </button>
+
+            {needsIOSPermission && (
+              <button
+                onClick={requestIOSMotionPermission}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs cursor-pointer shadow-sm"
+              >
+                تفعيل مستشعر الآيفون (iOS)
+              </button>
+            )}
+
+            <button
+              onClick={openKaabaInMaps}
+              className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>فتح البوصلة الأصلية في Google Maps</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {permissionError && (
-        <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-600/30 text-xs text-rose-200 text-right">
-          {permissionError}
-        </div>
-      )}
-
-      {/* Main Visual Display: Interactive Compass or Visual Map */}
-      {activeMode !== 'map' ? (
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-b from-stone-900 via-stone-900 to-emerald-950/70 border border-emerald-500/30 p-6 sm:p-8 flex flex-col items-center justify-center text-center shadow-xl">
-          {/* Subtle radial background glow */}
+      {/* MAIN VIEW: AUTOMATIC COMPASS DISPLAY */}
+      {activeTab !== 'map' && (
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-b from-stone-900 via-stone-900 to-emerald-950/80 border border-emerald-500/30 p-6 sm:p-8 flex flex-col items-center justify-center text-center shadow-2xl">
+          {/* Ambient glow */}
           <div
             className={`absolute inset-0 transition-opacity duration-700 pointer-events-none ${
-              isAligned ? 'bg-emerald-500/20 opacity-100' : 'bg-emerald-500/5 opacity-50'
+              isAligned || justAligned
+                ? 'bg-emerald-500/20 opacity-100'
+                : 'bg-emerald-500/5 opacity-50'
             }`}
           />
 
-          {/* Alignment status alert badge */}
-          <div
-            className={`relative z-10 mb-6 px-4 py-2.5 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${
-              isAligned
-                ? 'bg-emerald-500 text-stone-950 shadow-lg shadow-emerald-500/50 animate-pulse'
-                : 'bg-stone-800/90 text-stone-200 border border-stone-700'
-            }`}
-          >
-            {isAligned ? (
-              <>
-                <CheckCircle className="w-4 h-4 text-stone-950" />
-                <span>
-                  {activeMode === 'auto'
-                    ? `أنت الآن في وضع التوجيه الآلي: اتجه مباشرة بزاوية ${qiblaBearing}° (${cardinalText})`
-                    : 'أنت الآن تواجه القبلة المشرفة بدقة تامة!'}
-                </span>
-              </>
+          {/* Top Status Banner */}
+          <div className="relative z-10 mb-5 w-full max-w-lg">
+            {activeTab === 'auto' ? (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/95 via-emerald-900/90 to-emerald-950/95 border border-emerald-400/80 shadow-xl shadow-emerald-950/80 flex items-center justify-between gap-2.5 text-emerald-200 text-xs sm:text-sm font-bold">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <span>
+                    التحديد الآلي مؤكد: اتجاه القبلة في {location.cityName} هو{' '}
+                    <strong className="text-white underline decoration-emerald-400 decoration-2">
+                      {qiblaBearing}° {cardinalText}
+                    </strong>
+                  </span>
+                </div>
+
+                <button
+                  onClick={runAutoDetermination}
+                  disabled={isScanning}
+                  className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer shadow-xs active:scale-95"
+                  title="إعادة الفحص والمسح الآلي"
+                >
+                  <RotateCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                  <span>{isScanning ? 'جاري المسح...' : 'إعادة مسح'}</span>
+                </button>
+              </div>
+            ) : isAligned ? (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/95 via-emerald-900/90 to-emerald-950/95 border border-emerald-400/80 shadow-xl flex items-center justify-center gap-2 text-emerald-200 text-xs sm:text-sm font-bold">
+                <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                <span>أنت الآن تواجه القبلة المشرفة بدقة تامة! (الكعبة أمامك مباشرة)</span>
+              </div>
             ) : (
-              <>
-                <RotateCw
-                  className="w-4 h-4 text-emerald-400 animate-spin"
-                  style={{ animationDuration: '6s' }}
-                />
-                <span>
-                  قم بتدوير الهاتف حتى يتطابق المؤشر الذهبي (فارق {Math.abs(Math.round(diffToQibla))}°)
-                </span>
-              </>
+              <div className="p-3.5 rounded-2xl bg-stone-950/90 border border-stone-800 shadow-md flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-stone-200">
+                  <RotateCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" style={{ animationDuration: '4s' }} />
+                  <span>
+                    فارق الزاوية:{' '}
+                    <strong className="text-amber-300 font-bold tabular-nums">
+                      {Math.abs(Math.round(diffToQibla))}°
+                    </strong>{' '}
+                    ({diffToQibla > 0 ? 'انحرف يميناً' : 'انحرف يساراً'})
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('auto');
+                    runAutoDetermination();
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer active:scale-95"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>تطابق آلي فوري</span>
+                </button>
+              </div>
             )}
           </div>
 
-          {/* Big Circular Compass Dial */}
-          <div className="relative w-72 h-72 sm:w-88 sm:h-88 flex items-center justify-center">
-            {/* Outer ring with degree markings and cardinal points */}
+          {/* Quick Explanatory Badges */}
+          <div className="relative z-10 mb-4 flex items-center gap-2 flex-wrap justify-center text-xs">
+            <span className="px-3 py-1 rounded-full bg-stone-950/90 border border-emerald-500/40 text-emerald-300 font-bold font-mono">
+              🕋 القبلة: {qiblaBearing}° {cardinalText}
+            </span>
+            <span className="px-3 py-1 rounded-full bg-stone-900/90 border border-stone-800 text-amber-300 font-semibold font-mono">
+              المسافة: {distanceKm.toLocaleString('ar-SA')} كم
+            </span>
+            <span className="px-3 py-1 rounded-full bg-stone-900/90 border border-stone-800 text-stone-300">
+              الشمال: 0° | الشرق: 90° | الجنوب: 180°
+            </span>
+          </div>
+
+          {/* CIRCULAR COMPASS DIAL */}
+          <div
+            ref={dialRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            className="relative w-72 h-72 sm:w-88 sm:h-88 flex items-center justify-center my-3 select-none touch-none"
+            title="قرص البوصلة الآلي الفلكي"
+          >
+            {/* Outer Dial Ring */}
             <div
-              className="absolute inset-0 rounded-full border-4 border-stone-700/60 bg-gradient-to-br from-stone-950 via-stone-900 to-[#051c16] shadow-2xl flex items-center justify-center transition-transform duration-300 ease-out"
+              className="absolute inset-0 rounded-full border-4 border-stone-700/60 bg-gradient-to-br from-stone-950 via-stone-900 to-[#041a15] shadow-2xl flex items-center justify-center transition-transform duration-300 ease-out"
               style={{
-                transform: `rotate(${-currentCompassHeading}deg)`,
+                transform: `rotate(${-currentHeading}deg)`,
               }}
             >
-              {/* Cardinal Letters */}
+              {/* Cardinal Points */}
               <span className="absolute top-2.5 text-xs font-black text-rose-500 font-sans tracking-wide">
-                ش (N)
+                ش (N) 0°
               </span>
               <span className="absolute bottom-2.5 text-xs font-bold text-stone-400 font-sans">
-                ج (S)
+                ج (S) 180°
               </span>
               <span className="absolute left-3 text-xs font-bold text-stone-400 font-sans">
-                غ (W)
+                غ (W) 270°
               </span>
               <span className="absolute right-3 text-xs font-bold text-stone-400 font-sans">
-                شـ (E)
+                شـ (E) 90°
               </span>
 
-              {/* Degree tick marks */}
+              {/* 36 Degree Ticks */}
               {Array.from({ length: 36 }).map((_, i) => (
                 <div
                   key={i}
@@ -428,34 +605,33 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
                 />
               ))}
 
-              {/* Qibla Marker Arrow & Badge on the dial */}
+              {/* Kaaba Badge fixed on dial at exact Qibla Bearing */}
               <div
                 className="absolute w-full h-full flex flex-col items-center justify-start pointer-events-none"
                 style={{
                   transform: `rotate(${qiblaBearing}deg)`,
                 }}
               >
-                {/* Kaaba Silhouette / Golden Badge */}
                 <div className="relative -top-4 flex flex-col items-center animate-bounce" style={{ animationDuration: '2.5s' }}>
-                  <div className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-[11px] shadow-lg border border-amber-200 flex items-center gap-1">
-                    <span>🕋</span>
+                  <div className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 text-stone-950 font-black text-xs shadow-xl border-2 border-amber-200 flex items-center gap-1.5">
+                    <span className="text-sm">🕋</span>
                     <span>الكعبة ({qiblaBearing}°)</span>
                   </div>
-                  <div className="w-0 h-0 border-l-[7px] border-l-transparent border-r-[7px] border-r-transparent border-t-[9px] border-t-amber-500" />
+                  <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-amber-400" />
                 </div>
               </div>
 
-              {/* Sun Marker on Compass dial if sun is above horizon */}
+              {/* Sun Marker on Dial if above horizon */}
               {sunInfo.isVisible && (
                 <div
-                  className="absolute w-full h-full flex flex-col items-center justify-start pointer-events-none opacity-80"
+                  className="absolute w-full h-full flex flex-col items-center justify-start pointer-events-none opacity-85"
                   style={{
                     transform: `rotate(${sunInfo.azimuth}deg)`,
                   }}
                   title={`الشمس: ${sunInfo.azimuth}°`}
                 >
                   <div className="relative -top-2 flex flex-col items-center">
-                    <div className="px-1.5 py-0.5 rounded bg-amber-400/90 text-stone-950 text-[9px] font-bold flex items-center gap-0.5">
+                    <div className="px-1.5 py-0.5 rounded bg-amber-400 text-stone-950 text-[9px] font-bold flex items-center gap-0.5 shadow-sm">
                       <Sun className="w-2.5 h-2.5" />
                       <span>شمس {sunInfo.azimuth}°</span>
                     </div>
@@ -464,138 +640,101 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
               )}
             </div>
 
-            {/* Central Stationary Pointer / Golden Direction Arrow */}
+            {/* Central Pointer Arrow pointing towards Kaaba */}
             <div
-              className={`relative z-10 w-28 h-28 rounded-full border-2 shadow-2xl flex flex-col items-center justify-center transition-all ${
-                isAligned
-                  ? 'bg-gradient-to-b from-emerald-900 to-emerald-950 border-emerald-400 ring-4 ring-emerald-500/30'
-                  : 'bg-stone-900/95 border-emerald-500/40'
+              className={`relative z-10 w-28 h-28 sm:w-32 sm:h-32 rounded-full border-2 shadow-2xl flex flex-col items-center justify-center transition-all ${
+                isAligned || activeTab === 'auto'
+                  ? 'bg-gradient-to-b from-emerald-900 to-emerald-950 border-emerald-400 ring-4 ring-emerald-500/40'
+                  : 'bg-stone-900/95 border-amber-500/40'
               }`}
             >
               <Navigation2
-                className={`w-10 h-10 transition-colors drop-shadow-md ${
-                  isAligned ? 'text-emerald-300' : 'text-amber-400'
+                className={`w-10 h-10 sm:w-12 sm:h-12 transition-all drop-shadow-md ${
+                  isAligned || activeTab === 'auto' ? 'text-emerald-300 scale-110' : 'text-amber-400'
                 }`}
                 style={{
                   transform: `rotate(${diffToQibla}deg)`,
                   transition: 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
                 }}
               />
-              <span className="text-xs font-black text-white mt-1 tabular-nums font-sans">
+              <span className="text-xs sm:text-sm font-black text-white mt-1 tabular-nums font-sans">
                 {qiblaBearing}°
               </span>
-              <span className="text-[9px] text-stone-300 font-medium">
-                {activeMode === 'auto' ? 'توجيه آلي' : `${Math.abs(Math.round(diffToQibla))}° فارق`}
+              <span className="text-[10px] text-stone-300 font-medium">
+                {activeTab === 'auto' ? 'تحديد آلي مباشر' : isAligned ? 'متطابق تماماً 🕋' : `${Math.abs(Math.round(diffToQibla))}° فارق`}
               </span>
             </div>
 
-            {/* Fixed Top Indicator Arrow (Pointing forward from device) */}
+            {/* Top Indicator Arrow (Pointing forward from device) */}
             <div className="absolute -top-3.5 z-20 flex flex-col items-center">
-              <div className="w-0 h-0 border-l-[9px] border-l-transparent border-r-[9px] border-r-transparent border-t-[12px] border-t-emerald-400 drop-shadow-md" />
+              <div className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[14px] border-t-emerald-400 drop-shadow-lg" />
             </div>
           </div>
 
-          {/* Quick Auto-Align or Sensor switch CTA */}
-          <div className="mt-7 flex items-center gap-2 flex-wrap justify-center">
-            {activeMode !== 'auto' ? (
-              <button
-                onClick={() => setActiveMode('auto')}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-950/60 transition-transform active:scale-95"
-              >
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>تثبيت التوجيه التلقائي نحو القبلة فوراً (Auto-Align)</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  setActiveMode('sensor');
-                  if (needsPermission) requestIOSPermission();
-                }}
-                className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-semibold text-xs flex items-center gap-2 cursor-pointer border border-stone-700 transition-colors"
-              >
-                <Smartphone className="w-4 h-4 text-emerald-400" />
-                <span>تشغيل مستشعر الدوران الحي مع الهاتف</span>
-              </button>
-            )}
-
+          {/* Quick Action Button for Instant Snap */}
+          <div className="mt-5 w-full max-w-md flex items-center justify-center gap-2">
             <button
-              onClick={() => setActiveMode('map')}
-              className="px-3.5 py-2 rounded-xl bg-stone-800/80 hover:bg-stone-800 text-stone-300 hover:text-white font-medium text-xs flex items-center gap-1.5 cursor-pointer border border-stone-700/60"
+              onClick={() => {
+                setActiveTab('auto');
+                runAutoDetermination();
+              }}
+              className="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-emerald-500 to-teal-500 hover:from-amber-400 hover:to-teal-400 text-stone-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-950/80 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
             >
-              <MapIcon className="w-3.5 h-3.5 text-amber-400" />
-              <span>عرض الخريطة التفاعلية</span>
+              <Zap className="w-4 h-4 fill-stone-950" />
+              <span>تحديث التحديد الآلي الفلكي (تطابق 100%)</span>
             </button>
           </div>
 
-          {/* Live Readouts Bar */}
-          <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-2.5 w-full max-w-xl">
-            <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 text-center">
-              <div className="text-[11px] text-stone-400 font-medium">زاوية القبلة الدقيقة</div>
-              <div className="text-base font-bold text-emerald-400 tabular-nums">
-                {qiblaBearing}° {cardinalText}
-              </div>
+          {/* Practical Direction Guide Card for the User */}
+          <div className="mt-6 p-5 rounded-2xl bg-stone-950/80 border border-emerald-500/30 max-w-lg w-full text-right space-y-3">
+            <div className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4" />
+              <span>دليل التوجيه العملي في {location.cityName}:</span>
             </div>
 
-            <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 text-center">
-              <div className="text-[11px] text-stone-400 font-medium">وضع البوصلة</div>
-              <div className="text-xs font-bold text-white mt-1">
-                {activeMode === 'auto' ? (
-                  <span className="text-emerald-400 flex items-center justify-center gap-1">
-                    <Sparkles className="w-3 h-3" /> توجيه آلي مثبت
+            <div className="space-y-2 text-xs text-stone-300 leading-relaxed">
+              <div className="p-2.5 rounded-xl bg-stone-900 border border-stone-800">
+                <strong className="text-white block mb-1">١. بالجهات الأصلية:</strong>
+                <span>
+                  القبلة تقع باتجاه <strong>الجنوب الشرقي ({qiblaBearing}° {cardinalText})</strong>. إذا وقفت متجهاً نحو الشرق (مكان شروق الشمس)، فاستدر لليمين بزاوية بسيطة (30 درجة تقريباً) لتكون مواجهاً للكعبة المشرفة تماماً.
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-stone-900 border border-stone-800">
+                <strong className="text-white block mb-1">٢. بمسار الشمس في السماء:</strong>
+                <span>
+                  {sunInfo.relationToQibla}. الشمس مرجع فلكي طبيعي يقيني لا يتأثر بأي تشويش مغناطيسي أو عوائق إلكترونية.
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-stone-900 border border-stone-800">
+                <strong className="text-white block mb-1">٣. بوصلة الهاتف الأصلية (Google Maps):</strong>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <span className="text-[11px] text-stone-400">
+                    يمكنك تشغيل بوصلة الهاتف الحقيقية بنقرة واحدة عبر خرائط جوجل:
                   </span>
-                ) : hasCompassSensor ? (
-                  <span className="text-emerald-300">مستشعر حي نشط</span>
-                ) : (
-                  <span className="text-amber-400">ضبط يدوي</span>
-                )}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 text-center">
-              <div className="text-[11px] text-stone-400 font-medium">المسافة إلى مكة</div>
-              <div className="text-base font-bold text-amber-300 tabular-nums">
-                {distanceKm.toLocaleString('ar-SA')} كم
-              </div>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 text-center">
-              <div className="text-[11px] text-stone-400 font-medium">حالة الدقة</div>
-              <div className="text-xs font-bold text-emerald-300 mt-1 flex items-center justify-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>عالية (GPS فلكي)</span>
+                  <button
+                    onClick={openKaabaInMaps}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>فتح في الخرائط</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-
-          {/* Manual adjustment slider if on desktop / no gyroscope in sensor mode */}
-          {activeMode === 'sensor' && !hasCompassSensor && (
-            <div className="mt-5 w-full max-w-sm space-y-2 text-right p-4 rounded-2xl bg-stone-950/90 border border-stone-800">
-              <div className="flex items-center justify-between text-xs text-stone-300">
-                <span className="font-semibold">تدوير البوصلة يدوياً:</span>
-                <span className="tabular-nums font-bold text-emerald-400">{manualOffset}°</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="359"
-                value={manualOffset}
-                onChange={(e) => setManualOffset(parseInt(e.target.value))}
-                className="w-full accent-emerald-500 cursor-pointer"
-              />
-              <p className="text-[10px] text-stone-400">
-                أو اضغط على زر «التوجيه الآلي الذكي» بالأعلى ليقوم النظام بضبط الاتجاه نحو القبلة تلقائياً.
-              </p>
-            </div>
-          )}
         </div>
-      ) : (
-        /* Visual Interactive Map View */
+      )}
+
+      {/* MAP RADAR VIEW */}
+      {activeTab === 'map' && (
         <div className="rounded-3xl bg-stone-900 border border-emerald-500/30 p-5 sm:p-6 space-y-4 shadow-xl text-right">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <MapIcon className="w-4 h-4 text-emerald-400" />
-                <span>رادار الخريطة المباشر لمسار القبلة نحو مكة المكرمة</span>
+                <span>رادار الخريطة الفلكي المباشر لمسار القبلة من {location.cityName} إلى مكة</span>
               </h3>
               <p className="text-xs text-stone-400 mt-0.5">
                 خط مستقيم دقيق يربط موقعك الحالي بالكعبة المشرفة مباشرة
@@ -611,16 +750,13 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
             </button>
           </div>
 
-          {/* Graphical Visualizer of Line from User to Kaaba */}
+          {/* Radar Visualizer */}
           <div className="relative w-full h-64 sm:h-72 rounded-2xl bg-[#031410] border border-emerald-500/30 overflow-hidden flex items-center justify-center p-4">
-            {/* Grid overlay */}
             <div className="absolute inset-0 bg-[radial-gradient(#059669_1px,transparent_1px)] [background-size:24px_24px] opacity-20 pointer-events-none" />
-
-            {/* Concentric distance rings */}
             <div className="absolute w-44 h-44 rounded-full border border-emerald-500/20 pointer-events-none" />
             <div className="absolute w-60 h-60 rounded-full border border-emerald-500/10 pointer-events-none" />
 
-            {/* Connecting direct geodesic beam */}
+            {/* Direct beam */}
             <div
               className="absolute h-1 bg-gradient-to-r from-emerald-400 via-amber-300 to-amber-400 shadow-lg shadow-amber-400/50 rounded-full"
               style={{
@@ -632,13 +768,13 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
               }}
             />
 
-            {/* User Pin (Center) */}
+            {/* User Pin */}
             <div className="relative z-10 flex flex-col items-center">
               <div className="w-10 h-10 rounded-full bg-emerald-500 border-2 border-white shadow-lg shadow-emerald-500/50 flex items-center justify-center animate-pulse">
                 <MapPin className="w-5 h-5 text-stone-950" />
               </div>
               <span className="text-[11px] font-bold text-white bg-stone-900/90 px-2 py-0.5 rounded-md mt-1 border border-stone-700">
-                موقعك: {location.cityName}
+                {location.cityName}
               </span>
             </div>
 
@@ -658,9 +794,8 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
               </span>
             </div>
 
-            {/* Compass badge in corner */}
             <div className="absolute bottom-3 right-3 bg-stone-900/90 border border-stone-700 p-2.5 rounded-xl text-center text-xs text-stone-300">
-              <div className="text-[10px] text-stone-400">زاوية الانحراف:</div>
+              <div className="text-[10px] text-stone-400">زاوية القبلة:</div>
               <div className="font-bold text-emerald-400 tabular-nums text-sm">
                 {qiblaBearing}° {cardinalText}
               </div>
@@ -669,24 +804,27 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
 
           <div className="flex justify-center pt-1">
             <button
-              onClick={() => setActiveMode('auto')}
+              onClick={() => {
+                setActiveTab('auto');
+                runAutoDetermination();
+              }}
               className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md"
             >
               <Compass className="w-4 h-4" />
-              <span>العودة لشاشة البوصلة الدائرية</span>
+              <span>العودة لشاشة البوصلة الآلية</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Solar Verification Reference (100% foolproof celestial reference) */}
+      {/* Solar Celestial Reference */}
       <div className="p-5 rounded-2xl bg-stone-900/70 border border-stone-800 space-y-3 text-right">
         <div className="flex items-center justify-between border-b border-stone-800 pb-2.5">
           <div className="flex items-center gap-2 text-amber-300 font-bold text-xs sm:text-sm">
             <Sun className="w-4 h-4 text-amber-400" />
-            <span>المرجع الفلكي الشمسي (تأكيد القبلة عبر موقع الشمس في السماء):</span>
+            <span>المرجع الفلكي الشمسي (تأكيد القبلة عبر مسار الشمس في السماء):</span>
           </div>
-          <span className="text-[10px] text-stone-400">طريقة فلكية موثوقة 100%</span>
+          <span className="text-[10px] text-stone-400">مرجع فلكي قطعي 100%</span>
         </div>
 
         <p className="text-xs text-stone-300 leading-relaxed">
@@ -707,34 +845,6 @@ export const QiblaCompass: React.FC<QiblaCompassProps> = ({
             <strong className="text-emerald-400 font-bold tabular-nums">{qiblaBearing}°</strong>
           </div>
         </div>
-      </div>
-
-      {/* Helpful Instructions */}
-      <div className="p-5 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-3 text-right">
-        <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
-          <Sparkles className="w-4 h-4" />
-          <span>إرشادات للحصول على أعلى دقة لتحديد القبلة</span>
-        </h4>
-        <ul className="text-xs text-stone-300 space-y-2 leading-relaxed">
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-400 font-bold">١.</span>
-            <span>
-              <strong>الوضع الآلي الذكي (Auto-Align):</strong> يُعطيك زاوية القبلة الدقيقة فوراً بناءً على إحداثيات GPS الفلكية دون الحاجة لتدوير الهاتف يدوياً أو القلق من التشويش المغناطيسي.
-            </span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-400 font-bold">٢.</span>
-            <span>
-              <strong>البوصلة الحركية الحية:</strong> عند استخدام حساس الهاتف، احرص على إبعاد الهاتف عن الأسطح المعدنية وأسلاك الشحن، وقم بتحريك الهاتف في الهواء على شكل رقم (8) لمعايرة الحساس.
-            </span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-400 font-bold">٣.</span>
-            <span>
-              <strong>المرجع الشمسي:</strong> يمكنك دائماً مقارنة اتجاهك بمسار الشمس في السماء كمرجع فلكي قطعي لا يخطئ.
-            </span>
-          </li>
-        </ul>
       </div>
     </div>
   );

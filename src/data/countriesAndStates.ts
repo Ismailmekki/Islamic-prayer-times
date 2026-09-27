@@ -574,6 +574,7 @@ export const COUNTRIES_AND_STATES: CountryData[] = [
     stateLabelArabic: 'منطقة / إقليم',
     states: [
       { nameArabic: 'باريس (العاصمة)', nameEnglish: 'Paris', latitude: 48.8566, longitude: 2.3522, isCapital: true },
+      { nameArabic: 'أميان', nameEnglish: 'Amiens', latitude: 49.8941, longitude: 2.2958 },
       { nameArabic: 'مارسيليا', nameEnglish: 'Marseille', latitude: 43.2965, longitude: 5.3698 },
       { nameArabic: 'ليون', nameEnglish: 'Lyon', latitude: 45.7640, longitude: 4.8357 },
       { nameArabic: 'تولوز', nameEnglish: 'Toulouse', latitude: 43.6047, longitude: 1.4442 },

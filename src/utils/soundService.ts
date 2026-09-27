@@ -244,6 +244,27 @@ class SoundService {
       navigator.vibrate([30, 40, 50]);
     }
   }
+
+  public playQiblaAlignedTone(): void {
+    try {
+      const ctx = this.getAudioContext();
+      const now = ctx.currentTime;
+      [587.33, 880.0].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + i * 0.1);
+        gain.gain.setValueAtTime(0.16, now + i * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.1);
+        osc.stop(now + i * 0.1 + 0.25);
+      });
+    } catch {
+      // AudioContext restricted before user interaction
+    }
+  }
 }
 
 export const soundService = new SoundService();

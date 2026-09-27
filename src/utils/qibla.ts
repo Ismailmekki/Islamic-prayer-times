@@ -60,27 +60,50 @@ export function getArabicCardinalDirection(degree: number): string {
 }
 
 /**
- * Compute 3D tilt-compensated compass heading from device Euler angles (alpha, beta, gamma).
- * Alpha: 0-360 (compass orientation)
+ * Compute reliable compass heading from device Euler angles (alpha, beta, gamma).
+ * Alpha: 0-360 (compass orientation in W3C specification)
  * Beta: -180 to 180 (pitch, front/back tilt)
  * Gamma: -90 to 90 (roll, left/right tilt)
  */
-export function computeTiltCompensatedHeading(alpha: number, beta: number, gamma: number): number {
+export function computeTiltCompensatedHeading(
+  alpha: number,
+  beta?: number | null,
+  gamma?: number | null
+): number {
+  if (typeof alpha !== 'number' || isNaN(alpha)) return 0;
+
+  // In W3C specification, when phone is held flat or nearly flat (standard compass reading):
+  // alpha represents rotation counter-clockwise from North, so heading = (360 - alpha) % 360
+  if (
+    beta === null ||
+    beta === undefined ||
+    gamma === null ||
+    gamma === undefined ||
+    (Math.abs(beta) <= 45 && Math.abs(gamma) <= 45)
+  ) {
+    const heading = (360 - alpha + 360) % 360;
+    return Math.round(heading * 10) / 10;
+  }
+
   const deg = Math.PI / 180;
-  const _x = beta * deg;
-  const _y = gamma * deg;
-  const _z = alpha * deg;
+  const a = alpha * deg;
+  const b = beta * deg;
+  const g = gamma * deg;
 
-  const cX = Math.cos(_x);
-  const cY = Math.cos(_y);
-  const cZ = Math.cos(_z);
-  const sX = Math.sin(_x);
-  const sY = Math.sin(_y);
-  const sZ = Math.sin(_z);
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cb = Math.cos(b);
+  const sb = Math.sin(b);
+  const sg = Math.sin(g);
 
-  // Vector components pointing forward from device plane
-  const Vx = -cZ * sY - sZ * sX * cY;
-  const Vy = -sZ * sY + cZ * sX * cY;
+  // Vector pointing along device's Y-axis (top of screen) projected onto Earth horizontal plane
+  const Vx = -sa * cb - ca * sg * sb;
+  const Vy = ca * cb - sa * sg * sb;
+
+  if (Math.abs(Vx) < 0.001 && Math.abs(Vy) < 0.001) {
+    const heading = (360 - alpha + 360) % 360;
+    return Math.round(heading * 10) / 10;
+  }
 
   let heading = Math.atan2(Vx, Vy) * (180 / Math.PI);
   heading = (heading + 360) % 360;
