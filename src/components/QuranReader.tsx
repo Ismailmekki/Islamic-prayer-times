@@ -22,6 +22,12 @@ import {
   ChevronDown,
   ChevronUp,
   Headphones,
+  Clock,
+  Timer,
+  AlertCircle,
+  RefreshCw,
+  FileText,
+  UserCheck,
 } from 'lucide-react';
 import {
   ALL_SURAHS,
@@ -49,7 +55,7 @@ export const QuranReader: React.FC = () => {
     }
   });
 
-  // Reciter State with persistent storage
+  // Reciter State with persistent storage for Quran
   const [selectedReciter, setSelectedReciter] = useState<QuranReciter>(() => {
     try {
       const savedId = localStorage.getItem('salati_selected_reciter_id');
@@ -61,7 +67,7 @@ export const QuranReader: React.FC = () => {
     return QURAN_RECITERS[0];
   });
 
-  // Surah & Roqyah State (Listening only)
+  // Surah & Roqyah State
   const [currentSurah, setCurrentSurah] = useState<SurahMeta>(ALL_SURAHS[0]);
   const [currentRoqyah, setCurrentRoqyah] = useState<RoqyahTrack>(ROQYAH_TRACKS[0]);
 
@@ -74,10 +80,18 @@ export const QuranReader: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState<boolean>(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
 
-  // Search and Category Filter for Surahs (making all 114 Surahs selectable)
+  // Sleep Timer State (minutes)
+  const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
+  const [sleepTimerRemaining, setSleepTimerRemaining] = useState<number | null>(null);
+
+  // Search and Filter states
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [surahCategory, setSurahCategory] = useState<'all' | 'popular' | 'juz30' | 'meccan' | 'medinan'>('all');
+  const [roqyahCategory, setRoqyahCategory] = useState<string>('all');
+  const [roqyahSearch, setRoqyahSearch] = useState<string>('');
+  const [showWrittenRuqyah, setShowWrittenRuqyah] = useState<boolean>(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -95,7 +109,35 @@ export const QuranReader: React.FC = () => {
     } catch {}
   }, [selectedReciter]);
 
-  // Filter Surahs by search and category
+  // Sleep timer interval
+  useEffect(() => {
+    if (!sleepTimerMinutes) {
+      setSleepTimerRemaining(null);
+      return;
+    }
+
+    let remaining = sleepTimerMinutes * 60;
+    setSleepTimerRemaining(remaining);
+
+    const interval = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(interval);
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        setIsPlaying(false);
+        setSleepTimerMinutes(null);
+        setSleepTimerRemaining(null);
+      } else {
+        setSleepTimerRemaining(remaining);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sleepTimerMinutes]);
+
+  // Filter Surahs
   const filteredSurahs = ALL_SURAHS.filter((s) => {
     const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
@@ -118,6 +160,22 @@ export const QuranReader: React.FC = () => {
     return matchesSearch && matchesCategory;
   });
 
+  // Filter Roqyah tracks
+  const filteredRoqyah = ROQYAH_TRACKS.filter((t) => {
+    const q = roqyahSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      t.titleArabic.toLowerCase().includes(q) ||
+      t.reciterArabic.toLowerCase().includes(q) ||
+      t.descriptionArabic.toLowerCase().includes(q) ||
+      t.badgeArabic.toLowerCase().includes(q);
+
+    const matchesCategory =
+      roqyahCategory === 'all' || t.categoryArabic === roqyahCategory;
+
+    return matchesSearch && matchesCategory;
+  });
+
   // Current playing track info
   const currentTitle =
     activeMode === 'quran'
@@ -134,22 +192,56 @@ export const QuranReader: React.FC = () => {
       ? getSurahAudioUrl(currentSurah.number, selectedReciter)
       : currentRoqyah.audioUrl;
 
-  // Initialize or change audio track
-  const playTrack = (url: string) => {
+  // Next / Prev Roqyah reciter
+  const handlePrevRoqyah = () => {
+    const currentIndex = ROQYAH_TRACKS.findIndex((t) => t.id === currentRoqyah.id);
+    const prevIndex = currentIndex <= 0 ? ROQYAH_TRACKS.length - 1 : currentIndex - 1;
+    handleSelectRoqyah(ROQYAH_TRACKS[prevIndex]);
+  };
+
+  const handleNextRoqyah = () => {
+    const currentIndex = ROQYAH_TRACKS.findIndex((t) => t.id === currentRoqyah.id);
+    const nextIndex = currentIndex >= ROQYAH_TRACKS.length - 1 ? 0 : currentIndex + 1;
+    handleSelectRoqyah(ROQYAH_TRACKS[nextIndex]);
+  };
+
+  // Next / Prev Surah
+  const handleNextSurah = () => {
+    const nextNum = currentSurah.number >= 114 ? 1 : currentSurah.number + 1;
+    const next = ALL_SURAHS.find((s) => s.number === nextNum) || ALL_SURAHS[0];
+    handleSelectSurah(next);
+  };
+
+  const handlePrevSurah = () => {
+    const prevNum = currentSurah.number <= 1 ? 114 : currentSurah.number - 1;
+    const prev = ALL_SURAHS.find((s) => s.number === prevNum) || ALL_SURAHS[113];
+    handleSelectSurah(prev);
+  };
+
+  // Initialize or change audio track with robust fallback
+  const playTrack = (url: string, isFallback = false) => {
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      audioRef.current.src = '';
     }
 
+    setAudioError(null);
     setIsLoadingAudio(true);
-    const audio = new Audio(url);
-    audio.crossOrigin = 'anonymous';
+
+    const audio = new Audio();
+    // Do not set audio.crossOrigin to avoid CORS restrictions on media streams
+    audio.src = url;
+    audio.preload = 'auto';
     audio.volume = isMuted ? 0 : volume;
     audio.playbackRate = playbackSpeed;
     audio.loop = isLooping;
 
     audio.onloadedmetadata = () => {
       setDuration(audio.duration || 0);
+      setIsLoadingAudio(false);
+    };
+
+    audio.oncanplay = () => {
       setIsLoadingAudio(false);
     };
 
@@ -165,7 +257,7 @@ export const QuranReader: React.FC = () => {
         if (activeMode === 'quran') {
           handleNextSurah();
         } else {
-          setIsPlaying(false);
+          handleNextRoqyah();
         }
       }
     };
@@ -173,6 +265,16 @@ export const QuranReader: React.FC = () => {
     audio.onerror = () => {
       setIsLoadingAudio(false);
       setIsPlaying(false);
+
+      // Attempt fallback mirror if available and not already attempted
+      if (!isFallback && activeMode === 'roqyah' && currentRoqyah.fallbackAudioUrl) {
+        playTrack(currentRoqyah.fallbackAudioUrl, true);
+        return;
+      }
+
+      setAudioError(
+        'تعذر تحميل البث الصوتي مؤقتاً بسبب بطء الاتصال. يرجى الضغط على زر إعادة المحاولة أو اختيار قارئ آخر.'
+      );
     };
 
     audio
@@ -180,13 +282,32 @@ export const QuranReader: React.FC = () => {
       .then(() => {
         setIsPlaying(true);
         setIsLoadingAudio(false);
+        setAudioError(null);
       })
-      .catch(() => {
+      .catch((err) => {
         setIsLoadingAudio(false);
-        setIsPlaying(false);
+        if (err.name !== 'AbortError') {
+          // Playback couldn't start automatically (e.g. browser autoplay policy)
+          setIsPlaying(false);
+        }
       });
 
     audioRef.current = audio;
+
+    // MediaSession Background Integration
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: currentTitle,
+          artist: activeMode === 'quran' ? selectedReciter.nameArabic : currentRoqyah.reciterArabic,
+          album: activeMode === 'quran' ? 'القرآن الكريم كاملاً' : 'الرقية الشرعية الشاملة',
+        });
+        navigator.mediaSession.setActionHandler('play', handleTogglePlay);
+        navigator.mediaSession.setActionHandler('pause', handleTogglePlay);
+        navigator.mediaSession.setActionHandler('previoustrack', activeMode === 'quran' ? handlePrevSurah : handlePrevRoqyah);
+        navigator.mediaSession.setActionHandler('nexttrack', activeMode === 'quran' ? handleNextSurah : handleNextRoqyah);
+      } catch {}
+    }
   };
 
   const handleTogglePlay = () => {
@@ -201,8 +322,14 @@ export const QuranReader: React.FC = () => {
     } else {
       audioRef.current
         .play()
-        .then(() => setIsPlaying(true))
-        .catch(() => setIsPlaying(false));
+        .then(() => {
+          setIsPlaying(true);
+          setAudioError(null);
+        })
+        .catch(() => {
+          setIsPlaying(false);
+          playTrack(currentAudioUrl);
+        });
     }
   };
 
@@ -219,18 +346,6 @@ export const QuranReader: React.FC = () => {
     playTrack(track.audioUrl);
   };
 
-  const handleNextSurah = () => {
-    const nextNum = currentSurah.number >= 114 ? 1 : currentSurah.number + 1;
-    const next = ALL_SURAHS.find((s) => s.number === nextNum) || ALL_SURAHS[0];
-    handleSelectSurah(next);
-  };
-
-  const handlePrevSurah = () => {
-    const prevNum = currentSurah.number <= 1 ? 114 : currentSurah.number - 1;
-    const prev = ALL_SURAHS.find((s) => s.number === prevNum) || ALL_SURAHS[113];
-    handleSelectSurah(prev);
-  };
-
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
     setCurrentTime(time);
@@ -243,7 +358,7 @@ export const QuranReader: React.FC = () => {
     if (audioRef.current) {
       audioRef.current.currentTime = Math.max(
         0,
-        Math.min(duration, audioRef.current.currentTime + seconds)
+        Math.min(duration || 100000, audioRef.current.currentTime + seconds)
       );
     }
   };
@@ -298,123 +413,161 @@ export const QuranReader: React.FC = () => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current = null;
+        audioRef.current.src = '';
       }
     };
   }, []);
 
-  // Theme container classes
+  // Format theme class
   const getThemeClass = () => {
     switch (readingTheme) {
       case 'light':
-        return 'bg-[#fcfaf5] text-stone-900 border-[#e3dac1]';
+        return 'bg-amber-50/95 text-stone-900 border-amber-200/80 shadow-stone-300';
       case 'sepia':
-        return 'bg-[#f5ede0] text-[#3e2c1c] border-[#d8c8ab]';
+        return 'bg-[#f4ecd8] text-[#3d2b1f] border-[#d8c7a5] shadow-[#2a1d15]/10';
       case 'dark':
       default:
-        return 'bg-stone-900 text-stone-100 border-stone-800';
+        return 'bg-stone-900/90 text-stone-100 border-stone-800 shadow-emerald-950/20';
     }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Top Banner: Listening Only Badge */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950 via-stone-900 to-stone-900 border border-emerald-500/30 p-6 sm:p-8">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 text-right">
-            <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
-              <Headphones className="w-4 h-4 animate-pulse" />
-              <span>استماع فقط · القرآن الكريم كاملاً والرقية الشرعية</span>
+    <div className="space-y-6 text-right">
+      {/* Top Banner and Listening Mode Selector (Quran vs Roqyah) */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900 to-emerald-950/80 border border-emerald-500/30 p-5 sm:p-6 shadow-xl">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+              <Headphones className="w-4 h-4 text-emerald-400" />
+              <span>استماع صوتي نقي بدون إعلانات · القرآن الكريم والرقية الشرعية الشاملة</span>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white font-quran">
-              مشغّل تلاوة القرآن الكريم (استماع فقط)
+            <h2 className="text-xl sm:text-2xl font-bold text-white font-quran tracking-wide">
+              {activeMode === 'quran'
+                ? 'مشغل القرآن الكريم المرتل كاملاً'
+                : 'الرقية الشرعية الشاملة الكبرى بأصوات كبار القراء'}
             </h2>
-            <p className="text-xs sm:text-sm text-stone-300 max-w-2xl leading-relaxed">
-              استماع نقي لجميع سور القرآن الكريم الـ 114 بأصوات 24 من نخبة كبار القراء، مع تسجيلات الرقية الشرعية المطولة الشاملة بدون إعلانات أو نصوص مشتتة.
+            <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
+              {activeMode === 'quran'
+                ? 'استماع نقي لجميع سور القرآن الكريم الـ 114 بأصوات 24 من كبار القراء، مع التحكم في سرعة التلاوة وتكرار السور.'
+                : 'استماع للرقية الشرعية الشاملة المطولة للتحصين والشفاء من العين والحسد والسحر والمس بأصوات 10 من أشهر القراء.'}
             </p>
           </div>
 
           {/* Mode Switcher Tabs */}
-          <div className="flex items-center gap-2 p-1.5 bg-stone-950/80 rounded-2xl border border-stone-800 self-start md:self-auto shrink-0">
+          <div className="flex items-center p-1.5 rounded-2xl bg-stone-950/90 border border-stone-800 gap-1.5 shrink-0 self-start md:self-auto">
             <button
               onClick={() => setActiveMode('quran')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeMode === 'quran'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/40'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
                   : 'text-stone-400 hover:text-white'
               }`}
             >
-              <Disc className="w-3.5 h-3.5" />
-              <span>القرآن (114 سورة - استماع)</span>
+              <Radio className="w-3.5 h-3.5" />
+              <span>القرآن الكريم (114 سورة)</span>
             </button>
+
             <button
               onClick={() => setActiveMode('roqyah')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeMode === 'roqyah'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/40'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
                   : 'text-stone-400 hover:text-white'
               }`}
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>الرقية الشرعية (استماع)</span>
+              <span>الرقية الشرعية (10 قراء)</span>
+              <span className="text-[10px] bg-amber-400/90 text-stone-950 px-1.5 py-0.2 rounded-md font-bold">
+                مُحدثة
+              </span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Lighting / Background Mode Switcher (Day vs Night vs Warm Sepia) */}
+      {/* Sleep Timer & Lighting Theme Bar */}
       <div className="p-3.5 rounded-2xl bg-stone-900/90 border border-stone-800 flex flex-wrap items-center justify-between gap-3 text-right">
+        {/* Sleep Timer Options */}
+        <div className="flex items-center gap-2 text-xs text-stone-300">
+          <Timer className="w-4 h-4 text-emerald-400" />
+          <span className="font-semibold">مؤقت النوم:</span>
+          <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1 text-[11px]">
+            {[
+              { min: null, label: 'إيقاف' },
+              { min: 15, label: '15 د' },
+              { min: 30, label: '30 د' },
+              { min: 45, label: '45 د' },
+              { min: 60, label: '60 د' },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={() => setSleepTimerMinutes(item.min)}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  sleepTimerMinutes === item.min
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-stone-400 hover:text-white'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {sleepTimerRemaining !== null && (
+            <span className="text-[11px] font-mono text-amber-300 bg-amber-950/60 border border-amber-600/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
+              <Clock className="w-3 h-3 text-amber-400" />
+              <span>يتوقف بعد: {formatTime(sleepTimerRemaining)}</span>
+            </span>
+          )}
+        </div>
+
+        {/* Theme Mode Switcher */}
         <div className="flex items-center gap-2 text-xs font-semibold text-stone-300">
-          <span>وضع الإضاءة للمشغل:</span>
+          <span>المظهر:</span>
           <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1">
             <button
               onClick={() => setReadingTheme('light')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
                 readingTheme === 'light'
                   ? 'bg-amber-100 text-stone-900 shadow-sm border border-amber-300'
                   : 'text-stone-400 hover:text-white'
               }`}
               title="الوضع النهاري"
             >
-              <Sun className="w-3.5 h-3.5 text-amber-500" />
+              <Sun className="w-3 h-3 text-amber-500" />
               <span>نهاري</span>
             </button>
 
             <button
               onClick={() => setReadingTheme('dark')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
                 readingTheme === 'dark'
                   ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/50 shadow-sm'
                   : 'text-stone-400 hover:text-white'
               }`}
               title="الوضع الليلي"
             >
-              <Moon className="w-3.5 h-3.5 text-emerald-400" />
+              <Moon className="w-3 h-3 text-emerald-400" />
               <span>ليلي</span>
             </button>
 
             <button
               onClick={() => setReadingTheme('sepia')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
                 readingTheme === 'sepia'
                   ? 'bg-[#e8d8b4] text-[#4d3319] border border-[#c4aa79] shadow-sm'
                   : 'text-stone-400 hover:text-white'
               }`}
               title="وضع الورق الدافئ"
             >
-              <BookOpen className="w-3.5 h-3.5 text-amber-700" />
-              <span>ورقي دافئ</span>
+              <BookOpen className="w-3 h-3 text-amber-700" />
+              <span>ورقي</span>
             </button>
           </div>
         </div>
-
-        <div className="text-xs text-stone-400 font-sans flex items-center gap-2">
-          <span>السورة الحالية للاستماع: </span>
-          <strong className="text-emerald-400 font-bold">{currentTitle}</strong>
-        </div>
       </div>
 
-      {/* Reciter Selector Section (قائمة اختيار القراء مع زيادة القراء 24 مقرئ) */}
+      {/* Reciter Selector Section for Quran mode */}
       {activeMode === 'quran' && (
         <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-stone-800 space-y-3.5 text-right">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800/80 pb-3">
@@ -433,7 +586,6 @@ export const QuranReader: React.FC = () => {
               </p>
             </div>
 
-            {/* Direct Reciter Select Dropdown */}
             <div className="flex items-center gap-2 self-start sm:self-auto">
               <span className="text-xs font-bold text-stone-300 whitespace-nowrap">المقرئ:</span>
               <div className="relative">
@@ -461,7 +613,6 @@ export const QuranReader: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Choice Pills of Popular Reciters */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             <span className="text-[11px] text-stone-400 whitespace-nowrap ml-1 font-semibold">
               شائع:
@@ -491,6 +642,76 @@ export const QuranReader: React.FC = () => {
         </div>
       )}
 
+      {/* Reciter Selector Section for Roqyah mode */}
+      {activeMode === 'roqyah' && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-stone-800 space-y-3.5 text-right">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800/80 pb-3">
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span>اختر قارئ الرقية الشرعية المفضل:</span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-sans">
+                  {ROQYAH_TRACKS.length} قراء متاحين
+                </span>
+              </h4>
+              <p className="text-[11px] text-stone-400">
+                القارئ النشط حالياً:{' '}
+                <strong className="text-emerald-400 font-bold">{currentRoqyah.reciterArabic}</strong> ·{' '}
+                <span className="text-amber-300">{currentRoqyah.titleArabic}</span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <span className="text-xs font-bold text-stone-300 whitespace-nowrap">القارئ:</span>
+              <div className="relative">
+                <select
+                  value={currentRoqyah.id}
+                  onChange={(e) => {
+                    const found = ROQYAH_TRACKS.find((r) => r.id === e.target.value);
+                    if (found) {
+                      handleSelectRoqyah(found);
+                    }
+                  }}
+                  className="bg-stone-950 border border-stone-700 hover:border-emerald-500 text-stone-200 text-xs rounded-xl px-3 py-2 pr-8 appearance-none cursor-pointer focus:outline-none focus:border-emerald-500 transition-colors w-60 sm:w-72"
+                >
+                  {ROQYAH_TRACKS.map((r) => (
+                    <option key={r.id} value={r.id} className="bg-stone-900 text-white">
+                      {r.reciterArabic} - {r.badgeArabic}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-3 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Choice Reciter Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            <span className="text-[11px] text-stone-400 whitespace-nowrap ml-1 font-semibold">
+              انتقال سريع:
+            </span>
+            {ROQYAH_TRACKS.map((r) => {
+              const isSelected = currentRoqyah.id === r.id;
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => handleSelectRoqyah(r)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap border transition-all cursor-pointer flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white border-emerald-500 font-bold shadow-md shadow-emerald-950/60'
+                      : 'bg-stone-950/70 border-stone-800 text-stone-300 hover:bg-stone-800 hover:text-white'
+                  }`}
+                >
+                  <UserCheck className="w-3 h-3 text-amber-300" />
+                  <span>{r.reciterArabic.replace('الشيخ ', '')}</span>
+                  <span className="text-[9px] opacity-75">({r.durationFormatted})</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Primary Audio Player Deck */}
       <div className={`rounded-3xl border transition-colors duration-300 p-5 sm:p-7 shadow-2xl space-y-5 text-right ${getThemeClass()}`}>
         {/* Track Title and Reciter Info */}
@@ -511,12 +732,18 @@ export const QuranReader: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-                  {activeMode === 'quran' ? 'استماع القرآن الكريم' : 'استماع الرقية الشرعية'}
+                  {activeMode === 'quran' ? 'استماع القرآن الكريم' : 'استماع الرقية الشرعية الشاملة'}
                 </span>
                 {isPlaying && (
                   <span className="text-[10px] text-amber-400 flex items-center gap-1 animate-pulse font-medium">
                     <span className="w-2 h-2 rounded-full bg-amber-400" />
                     جارٍ الاستماع...
+                  </span>
+                )}
+                {isLoadingAudio && (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 animate-pulse font-medium">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    جارٍ جلب الصوت النقي...
                   </span>
                 )}
               </div>
@@ -544,6 +771,23 @@ export const QuranReader: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Audio Error Alert if network fails */}
+        {audioError && (
+          <div className="p-3.5 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-xs text-rose-200 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{audioError}</span>
+            </div>
+            <button
+              onClick={() => playTrack(currentAudioUrl)}
+              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shrink-0 cursor-pointer flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>إعادة المحاولة</span>
+            </button>
+          </div>
+        )}
 
         {/* Seekable Progress Bar */}
         <div className="space-y-1.5">
@@ -573,7 +817,7 @@ export const QuranReader: React.FC = () => {
                   ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
                   : 'bg-black/5 hover:bg-black/10 border-current/20 opacity-80'
               }`}
-              title={isLooping ? 'إلغاء التكرار' : 'تكرار السورة تلقائياً'}
+              title={isLooping ? 'إلغاء التكرار' : 'تكرار المقطع تلقائياً'}
             >
               <Repeat className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">تكرار</span>
@@ -599,15 +843,13 @@ export const QuranReader: React.FC = () => {
 
           {/* Center: Main Transport Buttons */}
           <div className="flex items-center gap-3">
-            {activeMode === 'quran' && (
-              <button
-                onClick={handlePrevSurah}
-                className="p-2.5 rounded-xl bg-black/5 hover:bg-black/10 border border-current/20 transition-colors cursor-pointer"
-                title="السورة السابقة"
-              >
-                <SkipBack className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              onClick={activeMode === 'quran' ? handlePrevSurah : handlePrevRoqyah}
+              className="p-2.5 rounded-xl bg-black/5 hover:bg-black/10 border border-current/20 transition-colors cursor-pointer"
+              title={activeMode === 'quran' ? 'السورة السابقة' : 'القارئ السابق'}
+            >
+              <SkipBack className="w-4 h-4" />
+            </button>
 
             <button
               onClick={() => handleSkip(-10)}
@@ -621,7 +863,7 @@ export const QuranReader: React.FC = () => {
               onClick={handleTogglePlay}
               disabled={isLoadingAudio}
               className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-700/40 transition-transform active:scale-95 cursor-pointer"
-              title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل التلاوة'}
+              title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل الصوت'}
             >
               {isLoadingAudio ? (
                 <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -640,15 +882,13 @@ export const QuranReader: React.FC = () => {
               <RotateCw className="w-4 h-4" />
             </button>
 
-            {activeMode === 'quran' && (
-              <button
-                onClick={handleNextSurah}
-                className="p-2.5 rounded-xl bg-black/5 hover:bg-black/10 border border-current/20 transition-colors cursor-pointer"
-                title="السورة التالية"
-              >
-                <SkipForward className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              onClick={activeMode === 'quran' ? handleNextSurah : handleNextRoqyah}
+              className="p-2.5 rounded-xl bg-black/5 hover:bg-black/10 border border-current/20 transition-colors cursor-pointer"
+              title={activeMode === 'quran' ? 'السورة التالية' : 'القارئ التالي'}
+            >
+              <SkipForward className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Right: Volume Slider */}
@@ -677,17 +917,16 @@ export const QuranReader: React.FC = () => {
       </div>
 
       {/* ========================================================= */}
-      {/* 114 Surahs Audio Catalog (جميع السور اختيارية - استماع)    */}
+      {/* 114 Surahs Audio Catalog (Quran Mode)                     */}
       {/* ========================================================= */}
       {activeMode === 'quran' && (
         <div className="space-y-4 text-right">
-          {/* Header & Direct Surah Dropdown Selector Panel */}
           <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-stone-800 space-y-3.5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800/80 pb-3">
               <div className="space-y-0.5">
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
                   <Disc className="w-4 h-4 text-emerald-400" />
-                  <span>قائمة سور القرآن الكريم (114 سورة اختيارية - استماع كامل)</span>
+                  <span>قائمة سور القرآن الكريم (114 سورة كاملة - استماع)</span>
                 </h3>
                 <p className="text-xs text-stone-400">
                   السورة المختارة حالياً:{' '}
@@ -698,7 +937,6 @@ export const QuranReader: React.FC = () => {
                 </p>
               </div>
 
-              {/* Direct Surah Select Dropdown (اجعل كل السور اختيارية) */}
               <div className="flex items-center gap-2 self-start sm:self-auto">
                 <span className="text-xs font-bold text-stone-300 whitespace-nowrap">اختر السورة:</span>
                 <div className="relative">
@@ -724,7 +962,6 @@ export const QuranReader: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Choice Buttons for Common / Most Popular Surahs */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 no-scrollbar">
               <span className="text-[11px] text-stone-400 whitespace-nowrap ml-1 font-semibold">
                 اختيار سريع:
@@ -760,109 +997,93 @@ export const QuranReader: React.FC = () => {
                 );
               })}
             </div>
+          </div>
 
-            {/* Filter Categories & Search Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-              {/* Category Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-                {[
-                  { id: 'all', label: 'جميع السور (114)' },
-                  { id: 'popular', label: 'الأكثر استماعاً' },
-                  { id: 'juz30', label: 'قصار السور (جزء عم)' },
-                  { id: 'meccan', label: 'مكية (86)' },
-                  { id: 'medinan', label: 'مدنية (28)' },
-                ].map((cat) => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setSurahCategory(cat.id as any)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer border ${
-                      surahCategory === cat.id
-                        ? 'bg-emerald-700 text-white border-emerald-500 font-bold shadow-xs'
-                        : 'bg-stone-950 text-stone-400 border-stone-800 hover:text-white'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative w-full sm:w-72">
-                <Search className="w-3.5 h-3.5 text-stone-400 absolute right-3 top-2.5" />
+          {/* Search bar & filter pills */}
+          <div className="p-4 rounded-2xl bg-stone-900/80 border border-stone-800 space-y-3">
+            <div className="flex flex-col sm:flex-row items-center gap-2.5">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-stone-400 absolute right-3.5 top-3" />
                 <input
                   type="text"
-                  placeholder="ابحث باسم السورة أو رقمها..."
+                  placeholder="ابحث باسم السورة أو رقمها (مثال: البقرة، يوسف، 36)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-3 pr-9 py-2 rounded-xl bg-stone-950 border border-stone-700 text-xs text-white placeholder-stone-400 focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl pr-10 pl-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto shrink-0 pb-1 sm:pb-0">
+                {[
+                  { id: 'all', label: 'الكل (114)' },
+                  { id: 'popular', label: 'المشهورة' },
+                  { id: 'juz30', label: 'جزء عم' },
+                  { id: 'meccan', label: 'مكية' },
+                  { id: 'medinan', label: 'مدنية' },
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSurahCategory(c.id as any)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      surahCategory === c.id
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-stone-950 text-stone-400 hover:text-white border border-stone-800'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* 114 Surahs Selectable Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {/* Grid of Surahs */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-[500px] overflow-y-auto p-1 pr-1.5 scrollbar-thin">
             {filteredSurahs.map((surah) => {
-              const isSelected = currentSurah.number === surah.number && activeMode === 'quran';
+              const isSelected = currentSurah.number === surah.number;
               const isCurrentlyPlaying = isSelected && isPlaying;
 
               return (
-                <button
+                <div
                   key={surah.number}
                   onClick={() => handleSelectSurah(surah)}
-                  className={`p-3.5 rounded-2xl border text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`p-3 rounded-2xl border transition-all text-right cursor-pointer flex flex-col justify-between gap-2 ${
                     isSelected
-                      ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-950/40 ring-1 ring-emerald-500/50'
-                      : 'bg-stone-900/60 hover:bg-stone-800/80 border-stone-800 hover:border-emerald-500/40 text-stone-200'
+                      ? 'bg-gradient-to-b from-emerald-950/80 to-stone-900 border-emerald-500 shadow-md ring-1 ring-emerald-500/50'
+                      : 'bg-stone-900/60 border-stone-800 hover:bg-stone-800/80 hover:border-emerald-500/30'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono opacity-60 bg-black/20 px-1.5 py-0.5 rounded">
+                      #{surah.number}
+                    </span>
+                    <span className="text-[10px] opacity-60">
+                      {surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-sm text-white font-quran">سورة {surah.name}</h4>
+                    <p className="text-[10px] text-stone-400">{surah.numberOfAyahs} آية</p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-current/10">
+                    <span className="text-[10px] text-emerald-400 font-semibold">استماع كامل</span>
                     <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold tabular-nums shrink-0 border ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center ${
                         isCurrentlyPlaying
-                          ? 'bg-emerald-600 text-white border-emerald-400 animate-pulse'
-                          : isSelected
-                          ? 'bg-emerald-900 text-emerald-300 border-emerald-500/50'
-                          : 'bg-stone-950 text-emerald-400 border-stone-800'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-stone-800 text-stone-300'
                       }`}
                     >
                       {isCurrentlyPlaying ? (
-                        <Volume2 className="w-4 h-4 animate-bounce" />
+                        <Pause className="w-3 h-3 fill-current" />
                       ) : (
-                        surah.number
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-sm font-quran text-white">
-                          سورة {surah.name}
-                        </span>
-                        {isSelected && (
-                          <span className="text-[10px] text-emerald-300 bg-emerald-500/20 px-1.5 py-0.2 rounded border border-emerald-500/30">
-                            مختارة
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-stone-400">
-                        {surah.englishName} · {surah.numberOfAyahs} آية
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-stone-800/80 text-stone-300 font-medium">
-                      {surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}
-                    </span>
-                    <div className="p-1.5 rounded-lg bg-stone-800/80 text-emerald-400">
-                      {isCurrentlyPlaying ? (
-                        <Pause className="w-3.5 h-3.5 fill-current" />
-                      ) : (
-                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <Play className="w-3 h-3 fill-current mr-0.5" />
                       )}
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -870,22 +1091,158 @@ export const QuranReader: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* Roqyah Shariah Mode (استماع الرقية الشرعية)                */}
+      {/* Roqyah Shariah Mode (10 Reciters + Audio Improvements)     */}
       {/* ========================================================= */}
       {activeMode === 'roqyah' && (
         <div className="space-y-4 text-right">
-          <div className="p-5 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-xs text-stone-300 leading-relaxed flex items-start gap-3">
+          {/* Informational Guidance Box */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-stone-900 to-emerald-950/40 border border-emerald-500/40 text-xs text-stone-300 leading-relaxed flex items-start gap-3 shadow-md">
             <Shield className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-            <div>
-              <strong className="text-emerald-300 font-bold block mb-1">
-                فضل وأهمية الرقية الشرعية من الكتاب والسنة (استماع كامل):
+            <div className="space-y-1">
+              <strong className="text-emerald-300 font-bold block text-sm">
+                فضل وأهمية الرقية الشرعية من الكتاب والسنة المطهرة:
               </strong>
-              قال تعالى: ﴿وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ﴾. الرقية الشرعية سبب مشروع للشفاء وطرد وساوس الشياطين وجلب الطمأنينة والسكينة للمؤمن وأهل بيته.
+              <p>
+                قال تعالى: ﴿وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ﴾. الرقية الشرعية سبب مشروع ونافِع للشفاء من العين والحسد والسحر والمس، وطرد الشياطين وجلب السكينة والبركة للبيت والنفس.
+              </p>
             </div>
           </div>
 
+          {/* Search & Category Filter for Roqyah */}
+          <div className="p-4 rounded-2xl bg-stone-900/90 border border-stone-800 space-y-3">
+            <div className="flex flex-col sm:flex-row items-center gap-2.5">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-stone-400 absolute right-3.5 top-3" />
+                <input
+                  type="text"
+                  placeholder="ابحث باسم القارئ أو الغرض (مثال: العفاسي، الغامدي، العجمي، تحصين، عين)..."
+                  value={roqyahSearch}
+                  onChange={(e) => setRoqyahSearch(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl pr-10 pl-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto shrink-0 pb-1 sm:pb-0 no-scrollbar">
+                {[
+                  { id: 'all', label: 'جميع التسجيلات' },
+                  { id: 'شاملة', label: 'شاملة' },
+                  { id: 'للعين والحسد', label: 'للعين والحسد' },
+                  { id: 'تحصين المنزل', label: 'تحصين المنزل' },
+                  { id: 'سكينة وطمأنينة', label: 'سكينة وطمأنينة' },
+                  { id: 'آيات الشفاء', label: 'آيات الشفاء' },
+                  { id: 'مطولة شاملة', label: 'مطولة' },
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setRoqyahCategory(c.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      roqyahCategory === c.id
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-stone-950 text-stone-400 hover:text-white border border-stone-800'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle Button for Written Ruqyah Verses */}
+          <div className="flex justify-between items-center px-1">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Volume2 className="w-4 h-4 text-emerald-400" />
+              <span>تسجيلات الرقية الشرعية المتاحة ({filteredRoqyah.length} قارئ):</span>
+            </h3>
+
+            <button
+              onClick={() => setShowWrittenRuqyah(!showWrittenRuqyah)}
+              className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-emerald-300 text-xs font-semibold border border-emerald-500/30 hover:border-emerald-400/60 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-300" />
+              <span>{showWrittenRuqyah ? 'إخفاء الآيات المكتوبة' : 'عرض نص آيات الرقية الشرعية للقراءة'}</span>
+              {showWrittenRuqyah ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          {/* Written Ruqyah Verses & Duas Accordion */}
+          {showWrittenRuqyah && (
+            <div className="p-6 rounded-3xl bg-stone-950/90 border border-emerald-500/30 text-stone-200 space-y-5 shadow-2xl leading-relaxed text-right">
+              <div className="border-b border-stone-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-base text-amber-300 font-quran">
+                    آيات وأدعية الرقية الشرعية الجامعة من القرآن الكريم والسنة النبوية
+                  </h4>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    يمكنك القراءة مع الاستماع للتلاوة لزيادة التحصين والبركة بإذن الله
+                  </p>
+                </div>
+              </div>
+
+              {/* 1. Al-Fatiha */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-emerald-400 block">١. سورة الفاتحة (أم الكتاب والشافية الكافية):</span>
+                <p className="text-sm sm:text-base font-quran leading-loose text-white text-center">
+                  ﴿بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ • الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ • الرَّحْمَٰنِ الرَّحِيمِ • مَالِكِ يَوْمِ الدِّينِ • إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ • اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ • صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ﴾
+                </p>
+              </div>
+
+              {/* 2. Ayat Al-Kursi */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-emerald-400 block">٢. آية الكرسي (أعظم آية في كتاب الله - البقرة: 255):</span>
+                <p className="text-sm sm:text-base font-quran leading-loose text-white text-center">
+                  ﴿اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ ۚ لَّهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ ۗ مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ ۚ يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ ۖ وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ ۚ وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ ۖ وَلَا يَئُودُهُ حِفْظُهُمَا ۚ وَهُوَ الْعَلِيُّ الْعَظِيمُ﴾
+                </p>
+              </div>
+
+              {/* 3. Last verses of Baqarah */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-emerald-400 block">٣. خواتيم سورة البقرة (كفتاه من كل شر - 285-286):</span>
+                <p className="text-sm sm:text-base font-quran leading-loose text-white text-center">
+                  ﴿آمَنَ الرَّسُولُ بِمَا أُنزِلَ إِلَيْهِ مِن رَّبِّهِ وَالْمُؤْمِنُونَ ۚ كُلٌّ آمَنَ بِاللَّهِ وَمَلَائِكَتِهِ وَكُتُبِهِ وَرُسُلِهِ لَا نُفَرِّقُ بَيْنَ أَحَدٍ مِّن رُّسُلِهِ ۚ وَقَالُوا سَمِعْنَا وَأَطَعْنَا ۖ غُفْرَانَكَ رَبَّنَا وَإِلَيْكَ الْمَصِيرُ • لَا يُكَلِّفُ اللَّهُ نَفْسًا إِلَّا وُسْعَهَا ۚ لَهَا مَا كَسَبَتْ وَعَلَيْهَا مَا اكْتَسَبَتْ ۗ رَبَّنَا لَا تُؤَاخِذْنَا إِن نَّسِينَا أَوْ أَخْطَأْنَا ۚ رَبَّنَا وَلَا تَحْمِلْ عَلَيْنَا إِصْرًا كَمَا حَمَلْتَهُ عَلَى الَّذِينَ مِن قَبْلِنَا ۚ رَبَّنَا وَلَا تُحَمِّلْنَا مَا لَا طَاقَةَ لَنَا بِهِ ۖ وَاعْفُ عَنَّا وَاغْفِرْ لَنَا وَارْحَمْنَا ۚ أَنتَ مَوْلَانَا فَانصُرْنَا عَلَى الْقَوْمِ الْكَافِرِينَ﴾
+                </p>
+              </div>
+
+              {/* 4. Six Healing Verses */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-emerald-400 block">٤. آيات الشفاء الست في القرآن الكريم:</span>
+                <ul className="text-sm font-quran leading-loose space-y-1.5 text-stone-200">
+                  <li>• ﴿وَيَشْفِ صُدُورَ قَوْمٍ مُّؤْمِنِينَ﴾ [التوبة: 14]</li>
+                  <li>• ﴿وَشِفَاءٌ لِّمَا فِي الصُّدُورِ وَهُدًى وَرَحْمَةٌ لِّلْمُؤْمِنِينَ﴾ [يونس: 57]</li>
+                  <li>• ﴿يَخْرُجُ مِن بُطُونِهَا شَرَابٌ مُّخْتَلِفٌ أَلْوَانُهُ فِيهِ شِفَاءٌ لِّلنَّاسِ﴾ [النحل: 69]</li>
+                  <li>• ﴿وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ﴾ [الإسراء: 82]</li>
+                  <li>• ﴿وَإِذَا مَرِضْتُ فَهُوَ يَشْفِينِ﴾ [الشعراء: 80]</li>
+                  <li>• ﴿قُلْ هُوَ لِلَّذِينَ آمَنُوا هُدًى وَشِفَاءٌ﴾ [فصلت: 44]</li>
+                </ul>
+              </div>
+
+              {/* 5. Al-Ikhlas & Mu'awwidhatayn */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-emerald-400 block">٥. المعوذات (سورة الإخلاص، الفلق، الناس):</span>
+                <p className="text-sm font-quran leading-loose text-white text-center">
+                  ﴿قُلْ هُوَ اللَّهُ أَحَدٌ • اللَّهُ الصَّمَدُ • لَمْ يَلِدْ وَلَمْ يُولَدْ • وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ﴾<br />
+                  ﴿قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ • مِن شَرِّ مَا خَلَقَ • وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ • وَمِن شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ • وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ﴾<br />
+                  ﴿قُلْ أَعُوذُ بِرَبِّ النَّاسِ • مَلِكِ النَّاسِ • إِلَٰهِ النَّاسِ • مِن شَرِّ الْوَسْوَاسِ الْخَنَّاسِ • الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ • مِنَ الْجِنَّةِ وَالنَّاسِ﴾
+                </p>
+              </div>
+
+              {/* 6. Authentic Prophetic Duas */}
+              <div className="p-4 rounded-2xl bg-stone-900/60 border border-stone-800 space-y-2">
+                <span className="text-xs font-bold text-amber-300 block">٦. أدعية الرقية النبوية المأثورة عن رسول الله ﷺ:</span>
+                <ul className="text-xs sm:text-sm leading-relaxed space-y-2 text-stone-200">
+                  <li>• «بِسْمِ اللَّهِ أَرْقِيكَ، مِنْ كُلِّ شَيْءٍ يُؤْذِيكَ، مِنْ شَرِّ كُلِّ نَفْسٍ أَوْ عَيْنِ حَاسِدٍ، اللَّهُ يَشْفِيكَ، بِسْمِ اللَّهِ أَرْقِيكَ».</li>
+                  <li>• «أَعُوذُ بِكَلِمَاتِ اللَّهِ التَّامَّاتِ مِنْ شَرِّ مَا خَلَقَ».</li>
+                  <li>• «اللَّهُمَّ رَبَّ النَّاسِ أَذْهِبِ البَاسَ، اشْفِهِ وَأَنْتَ الشَّافِي، لا شِفَاءَ إِلا شِفَاؤُكَ، شِفَاءً لا يُغَادِرُ سَقَمًا».</li>
+                  <li>• «أَسْأَلُ اللَّهَ الْعَظِيمَ رَبَّ الْعَرْشِ الْعَظِيمِ أَنْ يَشْفِيَكَ» (سبع مرات).</li>
+                  <li>• «أَعُوذُ بِكَلِمَاتِ اللَّهِ التَّامَّةِ مِنْ كُلِّ شَيْطَانٍ وَهَامَّةٍ، وَمِنْ كُلِّ عَيْنٍ لامَّةٍ».</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* Cards Grid for 10 Reciters of Roqyah */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {ROQYAH_TRACKS.map((track) => {
+            {filteredRoqyah.map((track) => {
               const isSelected = currentRoqyah.id === track.id && activeMode === 'roqyah';
               const isCurrentlyPlaying = isSelected && isPlaying;
 
@@ -895,7 +1252,7 @@ export const QuranReader: React.FC = () => {
                   onClick={() => handleSelectRoqyah(track)}
                   className={`p-5 rounded-2xl border transition-all text-right cursor-pointer space-y-3 ${
                     isSelected
-                      ? 'bg-gradient-to-l from-emerald-950/80 to-stone-900 border-emerald-500 shadow-xl'
+                      ? 'bg-gradient-to-l from-emerald-950/90 via-stone-900 to-stone-900 border-emerald-500 shadow-xl ring-1 ring-emerald-500/40'
                       : 'bg-stone-900/60 border-stone-800 hover:bg-stone-800/80 hover:border-emerald-500/40'
                   }`}
                 >
@@ -915,15 +1272,15 @@ export const QuranReader: React.FC = () => {
                         )}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-bold text-base text-white">{track.titleArabic}</h4>
-                          <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-600/40 px-1.5 py-0.5 rounded-md">
+                          <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-600/40 px-2 py-0.5 rounded-md font-bold">
                             {track.badgeArabic}
                           </span>
                         </div>
-                        <div className="text-xs text-stone-400 mt-0.5">
-                          بصوت: <strong className="text-emerald-400">{track.reciterArabic}</strong> · المدة:{' '}
-                          <span className="font-mono tabular-nums">{track.durationFormatted}</span>
+                        <div className="text-xs text-stone-300 mt-1">
+                          بصوت: <strong className="text-emerald-400 font-semibold">{track.reciterArabic}</strong> · المدة:{' '}
+                          <span className="font-mono tabular-nums text-amber-300 font-bold">{track.durationFormatted}</span>
                         </div>
                       </div>
                     </div>
@@ -931,9 +1288,13 @@ export const QuranReader: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleSelectRoqyah(track);
+                        if (isSelected) {
+                          handleTogglePlay();
+                        } else {
+                          handleSelectRoqyah(track);
+                        }
                       }}
-                      className={`p-3 rounded-xl transition-transform active:scale-95 shadow-md ${
+                      className={`p-3 rounded-xl transition-transform active:scale-95 shadow-md cursor-pointer ${
                         isCurrentlyPlaying
                           ? 'bg-amber-600 text-white'
                           : 'bg-emerald-600 hover:bg-emerald-500 text-white'
@@ -950,6 +1311,18 @@ export const QuranReader: React.FC = () => {
                   <p className="text-xs text-stone-300 leading-relaxed border-t border-stone-800/80 pt-2.5">
                     {track.descriptionArabic}
                   </p>
+
+                  <div className="flex items-center justify-between text-[11px] pt-1 text-stone-400">
+                    <span className="px-2 py-0.5 rounded bg-stone-950 border border-stone-800">
+                      التصنيف: {track.categoryArabic}
+                    </span>
+                    {isSelected && (
+                      <span className="text-emerald-400 font-bold flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" />
+                        المقطع النشط حالياً
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}
