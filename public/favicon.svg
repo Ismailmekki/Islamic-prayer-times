@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="favBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" />
+      <stop offset="100%" stop-color="#022c22" />
+    </linearGradient>
+    <linearGradient id="favGold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#favBg)" />
+  <circle cx="32" cy="32" r="24" fill="none" stroke="#059669" stroke-width="1" stroke-opacity="0.5" />
+  <!-- Crescent -->
+  <path d="M 40 16 C 28 16 18 26 18 38 C 18 44 20 50 24 54 C 20 49 18 43 18 36 C 18 24 28 14 40 14 C 43 14 45 15 48 16 C 45 17 42 16 40 16 Z" fill="url(#favGold)" />
+  <!-- Mosque Dome Silhouette -->
+  <path d="M 32 26 C 28 30 25 35 25 42 L 39 42 C 39 35 36 30 32 26 Z" fill="url(#favGold)" />
+  <circle cx="32" cy="24" r="1.5" fill="url(#favGold)" />
+  <rect x="24" y="42" width="16" height="8" rx="1" fill="#043828" stroke="url(#favGold)" stroke-width="0.8" />
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" />
+      <stop offset="50%" stop-color="#043828" />
+      <stop offset="100%" stop-color="#021c14" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="50%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background with rounded corners for standalone view -->
+  <rect width="512" height="512" rx="100" fill="url(#bgGrad)" />
+  <rect x="12" y="12" width="488" height="488" rx="90" fill="none" stroke="url(#goldGrad)" stroke-width="4" stroke-opacity="0.3" />
+
+  <!-- Background decorative Islamic geometric circle pattern -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#059669" stroke-width="1.5" stroke-dasharray="6,6" stroke-opacity="0.4" />
+  <circle cx="256" cy="256" r="210" fill="none" stroke="url(#goldGrad)" stroke-width="1" stroke-opacity="0.2" />
+
+  <!-- Mosque Silhouette -->
+  <!-- Central Dome -->
+  <path d="M 256 160 C 230 190 200 230 200 280 L 312 280 C 312 230 282 190 256 160 Z" fill="url(#goldGrad)" />
+  <!-- Small top crescent of dome -->
+  <circle cx="256" cy="148" r="8" fill="url(#goldGrad)" />
+  <path d="M 256 140 L 256 156" stroke="url(#goldGrad)" stroke-width="2" />
+
+  <!-- Base structure -->
+  <rect x="190" y="280" width="132" height="60" rx="6" fill="#042f22" stroke="url(#goldGrad)" stroke-width="3" />
+  <!-- Arches in the base -->
+  <path d="M 215 340 L 215 305 Q 228 295 240 305 L 240 340 Z" fill="url(#goldGrad)" />
+  <path d="M 248 340 L 248 300 Q 256 290 264 300 L 264 340 Z" fill="url(#goldGrad)" />
+  <path d="M 272 340 L 272 305 Q 285 295 297 305 L 297 340 Z" fill="url(#goldGrad)" />
+
+  <!-- Minarets -->
+  <!-- Left Minaret -->
+  <rect x="156" y="210" width="22" height="130" rx="3" fill="#03261c" stroke="url(#goldGrad)" stroke-width="2" />
+  <polygon points="167,175 152,210 182,210" fill="url(#goldGrad)" />
+  <circle cx="167" cy="170" r="4" fill="url(#goldGrad)" />
+
+  <!-- Right Minaret -->
+  <rect x="334" y="210" width="22" height="130" rx="3" fill="#03261c" stroke="url(#goldGrad)" stroke-width="2" />
+  <polygon points="345,175 330,210 360,210" fill="url(#goldGrad)" />
+  <circle cx="345" cy="170" r="4" fill="url(#goldGrad)" />
+
+  <!-- Large Crescent Moon Embracing the Mosque -->
+  <path d="M 330 110 C 220 110 130 200 130 310 C 130 365 152 415 188 450 C 145 408 120 350 120 286 C 120 170 214 76 330 76 C 354 76 376 80 398 88 C 376 96 354 110 330 110 Z" fill="url(#goldGrad)" filter="url(#glow)" />
+
+  <!-- Shining Stars -->
+  <!-- Star 1 (Main) -->
+  <polygon points="360,140 365,152 378,154 368,163 371,176 360,169 349,176 352,163 342,154 355,152" fill="#fef08a" />
+  <!-- Star 2 (Small) -->
+  <polygon points="395,200 398,208 406,209 400,215 402,223 395,219 388,223 390,215 384,209 392,208" fill="#fef08a" />
+
+  <!-- Arabic Typography: صلاتي -->
+  <text x="256" y="415" font-family="'Cairo', 'Amiri', 'Traditional Arabic', sans-serif" font-size="52" font-weight="bold" fill="#ffffff" text-anchor="middle" filter="url(#glow)">صلاتي</text>
+  <text x="256" y="450" font-family="'Cairo', sans-serif" font-size="18" font-weight="600" fill="#34d399" text-anchor="middle" letter-spacing="2">SALATI PWA</text>
+</svg>
