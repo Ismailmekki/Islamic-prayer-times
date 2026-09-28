@@ -31,6 +31,8 @@ import {
   Download,
   CheckCircle2,
   Server,
+  GraduationCap,
+  Users,
 } from 'lucide-react';
 import {
   ALL_SURAHS,
@@ -41,12 +43,17 @@ import {
   SurahMeta,
   getSurahAudioUrl,
 } from '../data/quranData';
+import { MushafPageReader } from './MushafPageReader';
+import { TafsirSection } from './TafsirSection';
+import { QuranMemorizer } from './QuranMemorizer';
+import { KhatmahManager } from './KhatmahManager';
 
 export type ReadingTheme = 'light' | 'dark' | 'sepia';
+export type QuranReaderMode = 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah';
 
 export const QuranReader: React.FC = () => {
-  // Mode: Quran vs Roqyah (Both listening only)
-  const [activeMode, setActiveMode] = useState<'quran' | 'roqyah'>('quran');
+  // Mode: 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah'
+  const [activeMode, setActiveMode] = useState<QuranReaderMode>('mushaf');
 
   // Background Theme: Day (light) vs Night (dark) vs Sepia
   const [readingTheme, setReadingTheme] = useState<ReadingTheme>(() => {
@@ -552,139 +559,226 @@ export const QuranReader: React.FC = () => {
 
   return (
     <div className="space-y-6 text-right">
-      {/* Top Banner and Listening Mode Selector (Quran vs Roqyah) */}
+      {/* Top Banner and Listening Mode Selector (Mushaf vs Quran Audio vs Roqyah) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900 to-emerald-950/80 border border-emerald-500/30 p-5 sm:p-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-              <Headphones className="w-4 h-4 text-emerald-400" />
-              <span>استماع صوتي نقي بدون إعلانات · القرآن الكريم والرقية الشرعية الشاملة</span>
+              <BookOpen className="w-4 h-4 text-emerald-400" />
+              <span>مصحف المدينة المنورة والتفسير المعتمد وتحفيظ القرآن والختمات</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white font-quran tracking-wide">
-              {activeMode === 'quran'
+              {activeMode === 'mushaf'
+                ? 'مصحف المدينة المنورة (طبعة مجمع الملك فهد)'
+                : activeMode === 'tafsir'
+                ? 'تفسير القرآن الكريم (الميسر، السعدي، ابن كثير)'
+                : activeMode === 'memorize'
+                ? 'المعلم التعليمي للحفظ والتثبيت والتسميع'
+                : activeMode === 'khatmah'
+                ? 'ختمات القرآن التفاعلية وتوزيع الأجزاء وبطاقات الإتمام'
+                : activeMode === 'quran'
                 ? 'مشغل القرآن الكريم المرتل كاملاً'
                 : 'الرقية الشرعية الشاملة الكبرى بأصوات كبار القراء'}
             </h2>
             <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
-              {activeMode === 'quran'
+              {activeMode === 'mushaf'
+                ? 'تصفح صفحات المصحف الشريف الـ 604 كاملة بدقة فائقة صفحة بصفحة، مع مؤشر الأجزاء والسور، الانتقال المباشر، وحفظ علامة القراءة.'
+                : activeMode === 'tafsir'
+                ? 'تفسير شامل وموثوق لآيات وصفحات القرآن الكريم من أمهات كتب التفسير مع إمكانية البحث والنسخ.'
+                : activeMode === 'memorize'
+                ? 'أداة تعليمية ذكية لتكرار الآيات والتحفيظ مع خيارات إخفاء الكلمات للتسميع الذاتي، ومتابعة الآيات المحفوظة.'
+                : activeMode === 'khatmah'
+                ? 'أنشئ ختمة ووزع الأجزاء بأسماء الأهل والأصدقاء، مع توليد صور شهادات مباركة ومبهجة ومشاركتها عبر وسائل التواصل!'
+                : activeMode === 'quran'
                 ? 'استماع نقي لجميع سور القرآن الكريم الـ 114 بأصوات 24 من كبار القراء، مع التحكم في سرعة التلاوة وتكرار السور.'
                 : `استماع للرقية الشرعية الشاملة المطولة للتحصين والشفاء من العين والحسد والسحر والمس بأصوات ${ROQYAH_TRACKS.length} من كبار القراء مع ميزة التنزيل المباشر.`}
             </p>
           </div>
 
           {/* Mode Switcher Tabs */}
-          <div className="flex items-center p-1.5 rounded-2xl bg-stone-950/90 border border-stone-800 gap-1.5 shrink-0 self-start md:self-auto">
+          <div className="flex items-center p-1.5 rounded-2xl bg-stone-950/90 border border-stone-800 gap-1.5 shrink-0 self-start md:self-auto overflow-x-auto no-scrollbar max-w-full">
+            <button
+              onClick={() => setActiveMode('mushaf')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeMode === 'mushaf'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>مصحف المدينة</span>
+            </button>
+
+            <button
+              onClick={() => setActiveMode('tafsir')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeMode === 'tafsir'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>تفسير القرآن</span>
+            </button>
+
+            <button
+              onClick={() => setActiveMode('memorize')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeMode === 'memorize'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span>تعليمي للحفظ</span>
+            </button>
+
+            <button
+              onClick={() => setActiveMode('khatmah')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeMode === 'khatmah'
+                  ? 'bg-amber-500 text-stone-950 font-black shadow-md shadow-amber-500/40'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>الختمات والمشاركة</span>
+              <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded-md font-bold border border-emerald-500/40">
+                بطاقات مبهجة
+              </span>
+            </button>
+
             <button
               onClick={() => setActiveMode('quran')}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                 activeMode === 'quran'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
                   : 'text-stone-400 hover:text-white'
               }`}
             >
               <Radio className="w-3.5 h-3.5" />
-              <span>القرآن الكريم (114 سورة)</span>
+              <span>تلاوات السور</span>
             </button>
 
             <button
               onClick={() => setActiveMode('roqyah')}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                 activeMode === 'roqyah'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-700/50'
                   : 'text-stone-400 hover:text-white'
               }`}
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>الرقية الشرعية ({ROQYAH_TRACKS.length} قارئ)</span>
-              <span className="text-[10px] bg-amber-400/90 text-stone-950 px-1.5 py-0.2 rounded-md font-bold">
-                تحميل متاح
-              </span>
+              <span>الرقية الشرعية</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Sleep Timer & Lighting Theme Bar */}
-      <div className="p-3.5 rounded-2xl bg-stone-900/90 border border-stone-800 flex flex-wrap items-center justify-between gap-3 text-right">
-        {/* Sleep Timer Options */}
-        <div className="flex items-center gap-2 text-xs text-stone-300">
-          <Timer className="w-4 h-4 text-emerald-400" />
-          <span className="font-semibold">مؤقت النوم:</span>
-          <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1 text-[11px]">
-            {[
-              { min: null, label: 'إيقاف' },
-              { min: 15, label: '15 د' },
-              { min: 30, label: '30 د' },
-              { min: 45, label: '45 د' },
-              { min: 60, label: '60 د' },
-            ].map((item) => (
+      {/* Render Mushaf Page Reader */}
+      {activeMode === 'mushaf' && (
+        <MushafPageReader
+          onSelectSurahAudio={(surahNum) => {
+            const found = ALL_SURAHS.find((s) => s.number === surahNum);
+            if (found) {
+              handleSelectSurah(found);
+            }
+          }}
+        />
+      )}
+
+      {/* Render Tafsir Section */}
+      {activeMode === 'tafsir' && <TafsirSection />}
+
+      {/* Render Quran Memorizer Tool */}
+      {activeMode === 'memorize' && <QuranMemorizer />}
+
+      {/* Render Khatmah Manager */}
+      {activeMode === 'khatmah' && <KhatmahManager />}
+
+      {/* Sleep Timer & Lighting Theme Bar (For Audio Modes: Quran Audio & Roqyah) */}
+      {(activeMode === 'quran' || activeMode === 'roqyah') && (
+        <div className="p-3.5 rounded-2xl bg-stone-900/90 border border-stone-800 flex flex-wrap items-center justify-between gap-3 text-right">
+          {/* Sleep Timer Options */}
+          <div className="flex items-center gap-2 text-xs text-stone-300">
+            <Timer className="w-4 h-4 text-emerald-400" />
+            <span className="font-semibold">مؤقت النوم:</span>
+            <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1 text-[11px]">
+              {[
+                { min: null, label: 'إيقاف' },
+                { min: 15, label: '15 د' },
+                { min: 30, label: '30 د' },
+                { min: 45, label: '45 د' },
+                { min: 60, label: '60 د' },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  onClick={() => setSleepTimerMinutes(item.min)}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                    sleepTimerMinutes === item.min
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-stone-400 hover:text-white'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {sleepTimerRemaining !== null && (
+              <span className="text-[11px] font-mono text-amber-300 bg-amber-950/60 border border-amber-600/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                <Clock className="w-3 h-3 text-amber-400" />
+                <span>يتوقف بعد: {formatTime(sleepTimerRemaining)}</span>
+              </span>
+            )}
+          </div>
+
+          {/* Theme Mode Switcher */}
+          <div className="flex items-center gap-2 text-xs font-semibold text-stone-300">
+            <span>المظهر:</span>
+            <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1">
               <button
-                key={item.label}
-                onClick={() => setSleepTimerMinutes(item.min)}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                  sleepTimerMinutes === item.min
-                    ? 'bg-emerald-600 text-white shadow-xs'
+                onClick={() => setReadingTheme('light')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                  readingTheme === 'light'
+                    ? 'bg-amber-100 text-stone-900 shadow-sm border border-amber-300'
                     : 'text-stone-400 hover:text-white'
                 }`}
+                title="الوضع النهاري"
               >
-                {item.label}
+                <Sun className="w-3 h-3 text-amber-500" />
+                <span>نهاري</span>
               </button>
-            ))}
-          </div>
 
-          {sleepTimerRemaining !== null && (
-            <span className="text-[11px] font-mono text-amber-300 bg-amber-950/60 border border-amber-600/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
-              <Clock className="w-3 h-3 text-amber-400" />
-              <span>يتوقف بعد: {formatTime(sleepTimerRemaining)}</span>
-            </span>
-          )}
-        </div>
+              <button
+                onClick={() => setReadingTheme('dark')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                  readingTheme === 'dark'
+                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                    : 'text-stone-400 hover:text-white'
+                }`}
+                title="الوضع الليلي"
+              >
+                <Moon className="w-3 h-3 text-emerald-400" />
+                <span>ليلي</span>
+              </button>
 
-        {/* Theme Mode Switcher */}
-        <div className="flex items-center gap-2 text-xs font-semibold text-stone-300">
-          <span>المظهر:</span>
-          <div className="inline-flex items-center p-1 rounded-xl bg-stone-950 border border-stone-800 gap-1">
-            <button
-              onClick={() => setReadingTheme('light')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
-                readingTheme === 'light'
-                  ? 'bg-amber-100 text-stone-900 shadow-sm border border-amber-300'
-                  : 'text-stone-400 hover:text-white'
-              }`}
-              title="الوضع النهاري"
-            >
-              <Sun className="w-3 h-3 text-amber-500" />
-              <span>نهاري</span>
-            </button>
-
-            <button
-              onClick={() => setReadingTheme('dark')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
-                readingTheme === 'dark'
-                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/50 shadow-sm'
-                  : 'text-stone-400 hover:text-white'
-              }`}
-              title="الوضع الليلي"
-            >
-              <Moon className="w-3 h-3 text-emerald-400" />
-              <span>ليلي</span>
-            </button>
-
-            <button
-              onClick={() => setReadingTheme('sepia')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
-                readingTheme === 'sepia'
-                  ? 'bg-[#e8d8b4] text-[#4d3319] border border-[#c4aa79] shadow-sm'
-                  : 'text-stone-400 hover:text-white'
-              }`}
-              title="وضع الورق الدافئ"
-            >
-              <BookOpen className="w-3 h-3 text-amber-700" />
-              <span>ورقي</span>
-            </button>
+              <button
+                onClick={() => setReadingTheme('sepia')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                  readingTheme === 'sepia'
+                    ? 'bg-[#e8d8b4] text-[#4d3319] border border-[#c4aa79] shadow-sm'
+                    : 'text-stone-400 hover:text-white'
+                }`}
+                title="وضع الورق الدافئ"
+              >
+                <BookOpen className="w-3 h-3 text-amber-700" />
+                <span>ورقي</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Reciter Selector Section for Quran mode */}
       {activeMode === 'quran' && (
@@ -831,8 +925,9 @@ export const QuranReader: React.FC = () => {
         </div>
       )}
 
-      {/* Primary Audio Player Deck */}
-      <div className={`rounded-3xl border transition-colors duration-300 p-5 sm:p-7 shadow-2xl space-y-5 text-right ${getThemeClass()}`}>
+      {/* Primary Audio Player Deck (When in audio listening modes) */}
+      {(activeMode === 'quran' || activeMode === 'roqyah') && (
+        <div className={`rounded-3xl border transition-colors duration-300 p-5 sm:p-7 shadow-2xl space-y-5 text-right ${getThemeClass()}`}>
         {/* Track Title and Reciter Info */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-current/10 pb-4">
           <div className="flex items-center gap-4">
@@ -1086,6 +1181,7 @@ export const QuranReader: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* ========================================================= */}
       {/* 114 Surahs Audio Catalog (Quran Mode)                     */}
