@@ -28,6 +28,9 @@ import {
   RefreshCw,
   FileText,
   UserCheck,
+  Download,
+  CheckCircle2,
+  Server,
 } from 'lucide-react';
 import {
   ALL_SURAHS,
@@ -93,7 +96,35 @@ export const QuranReader: React.FC = () => {
   const [roqyahSearch, setRoqyahSearch] = useState<string>('');
   const [showWrittenRuqyah, setShowWrittenRuqyah] = useState<boolean>(false);
 
+  // Audio Engine & Download States
+  const [downloadingTrackId, setDownloadingTrackId] = useState<string | null>(null);
+  const [downloadToast, setDownloadToast] = useState<string | null>(null);
+  const [activeMirrorIndex, setActiveMirrorIndex] = useState<number>(0);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const watchdogTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper to retrieve all accessible mirrors for a Ruqyah track
+  const getTrackMirrors = (track: RoqyahTrack): string[] => {
+    const list: string[] = [track.audioUrl];
+    if (track.fallbackAudioUrl) list.push(track.fallbackAudioUrl);
+    if (track.alternativeMirrors) list.push(...track.alternativeMirrors);
+    return Array.from(new Set(list));
+  };
+
+  // Cleanup audio & timer on unmount
+  useEffect(() => {
+    return () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+    };
+  }, []);
 
   // Persist theme
   useEffect(() => {
@@ -190,7 +221,7 @@ export const QuranReader: React.FC = () => {
   const currentAudioUrl =
     activeMode === 'quran'
       ? getSurahAudioUrl(currentSurah.number, selectedReciter)
-      : currentRoqyah.audioUrl;
+      : (getTrackMirrors(currentRoqyah)[activeMirrorIndex] || currentRoqyah.audioUrl);
 
   // Next / Prev Roqyah reciter
   const handlePrevRoqyah = () => {
@@ -218,8 +249,18 @@ export const QuranReader: React.FC = () => {
     handleSelectSurah(prev);
   };
 
-  // Initialize or change audio track with robust fallback
-  const playTrack = (url: string, isFallback = false) => {
+  // Initialize or change audio track with robust fallback, watchdog, and failover
+  const playTrack = (
+    url: string,
+    isFallback = false,
+    forcedMirrorIndex?: number,
+    targetTrack?: RoqyahTrack
+  ) => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = '';
@@ -228,13 +269,27 @@ export const QuranReader: React.FC = () => {
     setAudioError(null);
     setIsLoadingAudio(true);
 
+    const trackToUse = targetTrack || currentRoqyah;
+    const mirrors = getTrackMirrors(trackToUse);
+    const currentMirrorIdx = forcedMirrorIndex !== undefined ? forcedMirrorIndex : activeMirrorIndex;
+
     const audio = new Audio();
-    // Do not set audio.crossOrigin to avoid CORS restrictions on media streams
     audio.src = url;
     audio.preload = 'auto';
     audio.volume = isMuted ? 0 : volume;
     audio.playbackRate = playbackSpeed;
     audio.loop = isLooping;
+
+    // Safety Watchdog: If audio stalls or takes > 5.5s to start, auto-failover to next mirror
+    watchdogTimerRef.current = setTimeout(() => {
+      if (activeMode === 'roqyah' && audio.readyState < 2) {
+        const nextIdx = (currentMirrorIdx + 1) % mirrors.length;
+        if (nextIdx !== currentMirrorIdx && mirrors[nextIdx]) {
+          setActiveMirrorIndex(nextIdx);
+          playTrack(mirrors[nextIdx], true, nextIdx, trackToUse);
+        }
+      }
+    }, 5500);
 
     audio.onloadedmetadata = () => {
       setDuration(audio.duration || 0);
@@ -242,7 +297,22 @@ export const QuranReader: React.FC = () => {
     };
 
     audio.oncanplay = () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
       setIsLoadingAudio(false);
+      setAudioError(null);
+    };
+
+    audio.onplaying = () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+      setIsLoadingAudio(false);
+      setIsPlaying(true);
+      setAudioError(null);
     };
 
     audio.ontimeupdate = () => {
@@ -263,17 +333,25 @@ export const QuranReader: React.FC = () => {
     };
 
     audio.onerror = () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
       setIsLoadingAudio(false);
       setIsPlaying(false);
 
-      // Attempt fallback mirror if available and not already attempted
-      if (!isFallback && activeMode === 'roqyah' && currentRoqyah.fallbackAudioUrl) {
-        playTrack(currentRoqyah.fallbackAudioUrl, true);
-        return;
+      // Attempt next mirror automatically if in Roqyah mode
+      if (activeMode === 'roqyah') {
+        const nextIdx = (currentMirrorIdx + 1) % mirrors.length;
+        if (nextIdx !== currentMirrorIdx && mirrors[nextIdx]) {
+          setActiveMirrorIndex(nextIdx);
+          playTrack(mirrors[nextIdx], true, nextIdx, trackToUse);
+          return;
+        }
       }
 
       setAudioError(
-        'تعذر تحميل البث الصوتي مؤقتاً بسبب بطء الاتصال. يرجى الضغط على زر إعادة المحاولة أو اختيار قارئ آخر.'
+        'تعذر تحميل البث الصوتي مؤقتاً بسبب بطء الاتصال أو قيود الشبكة. يرجى الضغط على زر إعادة المحاولة أو تبديل الخادم الصوتي.'
       );
     };
 
@@ -298,8 +376,8 @@ export const QuranReader: React.FC = () => {
     if ('mediaSession' in navigator) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: currentTitle,
-          artist: activeMode === 'quran' ? selectedReciter.nameArabic : currentRoqyah.reciterArabic,
+          title: activeMode === 'quran' ? `سورة ${currentSurah.name}` : trackToUse.titleArabic,
+          artist: activeMode === 'quran' ? selectedReciter.nameArabic : trackToUse.reciterArabic,
           album: activeMode === 'quran' ? 'القرآن الكريم كاملاً' : 'الرقية الشرعية الشاملة',
         });
         navigator.mediaSession.setActionHandler('play', handleTogglePlay);
@@ -343,7 +421,48 @@ export const QuranReader: React.FC = () => {
   const handleSelectRoqyah = (track: RoqyahTrack) => {
     setCurrentRoqyah(track);
     setActiveMode('roqyah');
-    playTrack(track.audioUrl);
+    setActiveMirrorIndex(0);
+    playTrack(track.audioUrl, false, 0, track);
+  };
+
+  // Switch between audio mirrors for Ruqyah
+  const handleSwitchMirror = () => {
+    if (activeMode !== 'roqyah') return;
+    const mirrors = getTrackMirrors(currentRoqyah);
+    if (mirrors.length <= 1) return;
+    const nextIdx = (activeMirrorIndex + 1) % mirrors.length;
+    setActiveMirrorIndex(nextIdx);
+    playTrack(mirrors[nextIdx], true, nextIdx, currentRoqyah);
+    setDownloadToast(`تم التبديل إلى الخادم البديل (${nextIdx + 1}/${mirrors.length}) بنجاح`);
+    setTimeout(() => setDownloadToast(null), 3000);
+  };
+
+  // Direct Ruqyah audio download with feedback
+  const handleDownloadRoqyah = (track: RoqyahTrack, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const url = track.audioUrl;
+    const cleanFilename = `${track.titleArabic} - ${track.reciterArabic}.mp3`.replace(/[/\\?%*:|"<>]/g, '_');
+
+    setDownloadingTrackId(track.id);
+    setDownloadToast(`جارٍ تحضير تنزيل: ${track.reciterArabic}...`);
+
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = cleanFilename;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setDownloadToast(`تم بدء تنزيل الرقية الشرعية (${track.fileSizeFormatted || 'ملف صوتي MP3'}) بنجاح!`);
+    } catch {
+      window.open(url, '_blank');
+      setDownloadToast(`تم فتح رابط التحميل المباشر للرقية`);
+    } finally {
+      setTimeout(() => setDownloadingTrackId(null), 1800);
+      setTimeout(() => setDownloadToast(null), 5000);
+    }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -449,7 +568,7 @@ export const QuranReader: React.FC = () => {
             <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
               {activeMode === 'quran'
                 ? 'استماع نقي لجميع سور القرآن الكريم الـ 114 بأصوات 24 من كبار القراء، مع التحكم في سرعة التلاوة وتكرار السور.'
-                : 'استماع للرقية الشرعية الشاملة المطولة للتحصين والشفاء من العين والحسد والسحر والمس بأصوات 10 من أشهر القراء.'}
+                : `استماع للرقية الشرعية الشاملة المطولة للتحصين والشفاء من العين والحسد والسحر والمس بأصوات ${ROQYAH_TRACKS.length} من كبار القراء مع ميزة التنزيل المباشر.`}
             </p>
           </div>
 
@@ -476,9 +595,9 @@ export const QuranReader: React.FC = () => {
               }`}
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>الرقية الشرعية (10 قراء)</span>
+              <span>الرقية الشرعية ({ROQYAH_TRACKS.length} قارئ)</span>
               <span className="text-[10px] bg-amber-400/90 text-stone-950 px-1.5 py-0.2 rounded-md font-bold">
-                مُحدثة
+                تحميل متاح
               </span>
             </button>
           </div>
@@ -754,38 +873,90 @@ export const QuranReader: React.FC = () => {
             </div>
           </div>
 
-          {/* Sound waves visualizer */}
-          {isPlaying && (
-            <div className="flex items-center gap-1 sm:self-center">
-              {[30, 80, 50, 95, 65, 100, 75, 45, 90, 60, 85, 40].map((h, i) => (
-                <div
-                  key={i}
-                  className="w-1 bg-gradient-to-t from-emerald-600 to-teal-400 rounded-full animate-bounce"
-                  style={{
-                    height: `${(h * 0.28).toFixed(0)}px`,
-                    animationDuration: `${0.4 + (i % 4) * 0.15}s`,
-                    animationDelay: `${i * 0.05}s`,
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          {/* Action buttons & Sound waves visualizer */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5 sm:self-center">
+            {activeMode === 'roqyah' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => handleDownloadRoqyah(currentRoqyah)}
+                  disabled={downloadingTrackId === currentRoqyah.id}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/50 transition-all active:scale-95 cursor-pointer"
+                  title="تحميل الرقية الشرعية الحالية بصيغة MP3 للاستماع في أي وقت دون إنترنت"
+                >
+                  {downloadingTrackId === currentRoqyah.id ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>جارٍ التنزيل...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>تحميل الرقية (MP3)</span>
+                      {currentRoqyah.fileSizeFormatted && (
+                        <span className="text-[10px] bg-emerald-950/80 text-emerald-300 px-1.5 py-0.2 rounded font-mono">
+                          {currentRoqyah.fileSizeFormatted}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </button>
+
+                {getTrackMirrors(currentRoqyah).length > 1 && (
+                  <button
+                    onClick={handleSwitchMirror}
+                    className="px-2.5 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 border border-current/20 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                    title="التبديل إلى سيرفر بديل في حال بطء البث"
+                  >
+                    <Server className="w-3.5 h-3.5 text-amber-400" />
+                    <span>خادم بديل ({activeMirrorIndex + 1}/{getTrackMirrors(currentRoqyah).length})</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {isPlaying && (
+              <div className="flex items-center gap-1 mr-1">
+                {[30, 80, 50, 95, 65, 100, 75, 45, 90, 60, 85, 40].map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-1 bg-gradient-to-t from-emerald-600 to-teal-400 rounded-full animate-bounce"
+                    style={{
+                      height: `${(h * 0.28).toFixed(0)}px`,
+                      animationDuration: `${0.4 + (i % 4) * 0.15}s`,
+                      animationDelay: `${i * 0.05}s`,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Audio Error Alert if network fails */}
         {audioError && (
-          <div className="p-3.5 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-xs text-rose-200 flex items-center justify-between gap-3">
+          <div className="p-3.5 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-xs text-rose-200 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{audioError}</span>
             </div>
-            <button
-              onClick={() => playTrack(currentAudioUrl)}
-              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shrink-0 cursor-pointer flex items-center gap-1"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>إعادة المحاولة</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {activeMode === 'roqyah' && getTrackMirrors(currentRoqyah).length > 1 && (
+                <button
+                  onClick={handleSwitchMirror}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>تجربة خادم بديل</span>
+                </button>
+              )}
+              <button
+                onClick={() => playTrack(currentAudioUrl)}
+                className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shrink-0 cursor-pointer flex items-center gap-1"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>إعادة المحاولة</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -1285,27 +1456,46 @@ export const QuranReader: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isSelected) {
-                          handleTogglePlay();
-                        } else {
-                          handleSelectRoqyah(track);
-                        }
-                      }}
-                      className={`p-3 rounded-xl transition-transform active:scale-95 shadow-md cursor-pointer ${
-                        isCurrentlyPlaying
-                          ? 'bg-amber-600 text-white'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                      }`}
-                    >
-                      {isCurrentlyPlaying ? (
-                        <Pause className="w-4 h-4 fill-current" />
-                      ) : (
-                        <Play className="w-4 h-4 fill-current mr-0.5" />
-                      )}
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Direct Download Button */}
+                      <button
+                        onClick={(e) => handleDownloadRoqyah(track, e)}
+                        disabled={downloadingTrackId === track.id}
+                        className="p-2.5 sm:px-3 sm:py-2.5 rounded-xl bg-stone-800 hover:bg-emerald-600 text-stone-200 hover:text-white transition-all active:scale-95 border border-stone-700 hover:border-emerald-500 cursor-pointer flex items-center gap-1"
+                        title={`تحميل الرقية الشرعية MP3 بصوت ${track.reciterArabic} (${track.fileSizeFormatted || 'ملف صوتي'})`}
+                      >
+                        {downloadingTrackId === track.id ? (
+                          <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                        <span className="text-[11px] font-bold hidden sm:inline">تحميل MP3</span>
+                      </button>
+
+                      {/* Play / Pause button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isSelected) {
+                            handleTogglePlay();
+                          } else {
+                            handleSelectRoqyah(track);
+                          }
+                        }}
+                        className={`p-3 rounded-xl transition-transform active:scale-95 shadow-md cursor-pointer ${
+                          isCurrentlyPlaying
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                        title={isCurrentlyPlaying ? 'إيقاف مؤقت' : 'تشغيل الاستماع'}
+                      >
+                        {isCurrentlyPlaying ? (
+                          <Pause className="w-4 h-4 fill-current" />
+                        ) : (
+                          <Play className="w-4 h-4 fill-current mr-0.5" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <p className="text-xs text-stone-300 leading-relaxed border-t border-stone-800/80 pt-2.5">
@@ -1327,6 +1517,14 @@ export const QuranReader: React.FC = () => {
               );
             })}
           </div>
+
+          {/* Download / Action Notification Toast */}
+          {downloadToast && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-stone-900/95 border border-emerald-500 text-white text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-2.5 animate-bounce max-w-[90vw] text-right">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{downloadToast}</span>
+            </div>
+          )}
         </div>
       )}
     </div>

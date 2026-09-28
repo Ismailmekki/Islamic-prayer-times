@@ -27,9 +27,8 @@ export const TopNav: React.FC<TopNavProps> = ({
     { id: 'qibla', label: 'اتجاه القبلة' },
     { id: 'mosques', label: 'المساجد القريبة' },
     { id: 'quran', label: 'القرآن والرقية' },
-    { id: 'khatma', label: 'ختمة القرآن' },
     { id: 'ibrahimiya', label: 'الصلاة الإبراهيمية' },
-    { id: 'adhkar', label: 'الأذكار والأدعية' },
+    { id: 'adhkar', label: 'الأذكار وحصن المسلم' },
   ];
 
   return (

@@ -15,9 +15,11 @@ import {
   Sliders,
   Volume2,
   Pause,
+  Shield,
 } from 'lucide-react';
 import { ADHKAR_CATEGORIES, DUAS_LIST, DhikrItem } from '../data/duasAndIbrahimiya';
 import { soundService } from '../utils/soundService';
+import { HisnAlmuslimSection } from './HisnAlmuslimSection';
 
 const DEFAULT_MASBAHA_PHRASES = [
   'سُبْحَانَ اللهِ وَبِحَمْدِهِ',
@@ -31,11 +33,23 @@ const DEFAULT_MASBAHA_PHRASES = [
 ];
 
 export const DuasAndAdhkar: React.FC = () => {
+  // Active Section: 'hisn' (حصن المسلم للأذكار اليومية) vs 'masbaha_duas' (السبحة الذكية والأدعية)
+  const [activeSubTab, setActiveSubTab] = useState<'hisn' | 'masbaha_duas'>('hisn');
+
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [counters, setCounters] = useState<Record<string, number>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isDuaAudioPlaying, setIsDuaAudioPlaying] = useState<boolean>(false);
+
+  const handleSendFromHisnToMasbaha = (text: string, count: number) => {
+    setMasbahaDhikr(text);
+    setMasbahaGoal(count || 33);
+    setMasbahaCount(0);
+    setActiveSubTab('masbaha_duas');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    soundService.playTasbeehClick();
+  };
 
   const handleToggleDuaAudio = () => {
     if (isDuaAudioPlaying) {
@@ -234,8 +248,44 @@ export const DuasAndAdhkar: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Hero: Digital Masbaha Feature */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-emerald-950 via-stone-900 to-stone-900 border border-emerald-500/30 shadow-xl">
+      {/* Primary Section Switcher: Hisn Al-Muslim vs Digital Masbaha & General Duas */}
+      <div className="flex items-center justify-between flex-wrap gap-3 p-1.5 rounded-2xl bg-stone-900 border border-stone-800 text-xs font-bold">
+        <div className="flex items-center gap-2 flex-1 w-full sm:w-auto">
+          <button
+            onClick={() => setActiveSubTab('hisn')}
+            className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              activeSubTab === 'hisn'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+                : 'text-stone-400 hover:text-white hover:bg-stone-800/60'
+            }`}
+          >
+            <Shield className="w-4 h-4 text-emerald-300" />
+            <span>حصن المسلم للأذكار اليومية</span>
+            <span className="text-[10px] bg-amber-400/90 text-stone-950 px-1.5 py-0.2 rounded-md font-bold">
+              جديد
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('masbaha_duas')}
+            className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              activeSubTab === 'masbaha_duas'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+                : 'text-stone-400 hover:text-white hover:bg-stone-800/60'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>السبحة الإلكترونية والأدعية العامة</span>
+          </button>
+        </div>
+      </div>
+
+      {activeSubTab === 'hisn' ? (
+        <HisnAlmuslimSection onSendToMasbaha={handleSendFromHisnToMasbaha} />
+      ) : (
+        <div className="space-y-6">
+          {/* Top Hero: Digital Masbaha Feature */}
+          <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-emerald-950 via-stone-900 to-stone-900 border border-emerald-500/30 shadow-xl">
         <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
           <div className="space-y-3 text-right flex-1 w-full">
             <div className="flex items-center justify-between">
@@ -590,6 +640,8 @@ export const DuasAndAdhkar: React.FC = () => {
           </div>
         )}
       </div>
+        </div>
+      )}
 
       {/* Modal: Add New Custom Dhikr */}
       {isAddModalOpen && (
