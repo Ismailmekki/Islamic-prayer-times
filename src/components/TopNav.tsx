@@ -22,13 +22,13 @@ export const TopNav: React.FC<TopNavProps> = ({
 }) => {
   const navItems = [
     { id: 'prayers', label: 'مواقيت الصلاة' },
+    { id: 'adhkar', label: 'أذكار الصباح والمساء' },
+    { id: 'quran', label: 'القرآن والرقية' },
+    { id: 'qibla', label: 'القبلة' },
     { id: 'tasbih', label: 'السبحة الإلكترونية' },
     { id: 'adhan', label: 'رفع الأذان' },
-    { id: 'qibla', label: 'اتجاه القبلة' },
-    { id: 'mosques', label: 'المساجد القريبة' },
-    { id: 'quran', label: 'القرآن والرقية' },
     { id: 'ibrahimiya', label: 'الصلاة الإبراهيمية' },
-    { id: 'adhkar', label: 'الأذكار وحصن المسلم' },
+    { id: 'mosques', label: 'المساجد القريبة' },
   ];
 
   return (

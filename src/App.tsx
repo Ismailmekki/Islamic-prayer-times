@@ -163,11 +163,11 @@ export default function App() {
   // Mobile Bottom Tab Bar items (Pattern 1 of touch mobile design)
   const mobileBottomTabs = [
     { id: 'prayers', label: 'المواقيت', icon: Clock },
+    { id: 'adhkar', label: 'الأذكار', icon: Sparkles },
+    { id: 'quran', label: 'القرآن', icon: BookOpen },
+    { id: 'qibla', label: 'القبلة', icon: Compass },
     { id: 'tasbih', label: 'السبحة', icon: CircleDot },
     { id: 'adhan', label: 'الأذان', icon: Volume2 },
-    { id: 'qibla', label: 'القبلة', icon: Compass },
-    { id: 'quran', label: 'القرآن', icon: BookOpen },
-    { id: 'adhkar', label: 'الأذكار', icon: Sparkles },
   ];
 
   return (
