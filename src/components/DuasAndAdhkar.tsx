@@ -16,10 +16,12 @@ import {
   Volume2,
   Pause,
   Shield,
+  Radio,
 } from 'lucide-react';
 import { ADHKAR_CATEGORIES, DUAS_LIST, DhikrItem } from '../data/duasAndIbrahimiya';
 import { soundService } from '../utils/soundService';
 import { HisnAlmuslimSection } from './HisnAlmuslimSection';
+import { AdhkarAudioPlayer } from './AdhkarAudioPlayer';
 
 const DEFAULT_MASBAHA_PHRASES = [
   'سُبْحَانَ اللهِ وَبِحَمْدِهِ',
@@ -33,8 +35,8 @@ const DEFAULT_MASBAHA_PHRASES = [
 ];
 
 export const DuasAndAdhkar: React.FC = () => {
-  // Active Section: 'hisn' (حصن المسلم للأذكار اليومية) vs 'masbaha_duas' (السبحة الذكية والأدعية)
-  const [activeSubTab, setActiveSubTab] = useState<'hisn' | 'masbaha_duas'>('hisn');
+  // Active Section: 'hisn' (حصن المسلم) vs 'audio_library' (المكتبة الصوتية) vs 'masbaha_duas' (السبحة الذكية والأدعية)
+  const [activeSubTab, setActiveSubTab] = useState<'hisn' | 'audio_library' | 'masbaha_duas'>('hisn');
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -248,14 +250,14 @@ export const DuasAndAdhkar: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Primary Section Switcher: Hisn Al-Muslim vs Digital Masbaha & General Duas */}
+      {/* Primary Section Switcher: Hisn Al-Muslim vs Audio Library vs Digital Masbaha & General Duas */}
       <div className="flex items-center justify-between flex-wrap gap-3 p-1.5 rounded-2xl bg-stone-900 border border-stone-800 text-xs font-bold">
-        <div className="flex items-center gap-2 flex-1 w-full sm:w-auto">
+        <div className="flex items-center gap-2 flex-1 w-full sm:w-auto overflow-x-auto no-scrollbar pb-1 sm:pb-0">
           <button
             onClick={() => setActiveSubTab('hisn')}
-            className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
               activeSubTab === 'hisn'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60 font-bold'
                 : 'text-stone-400 hover:text-white hover:bg-stone-800/60'
             }`}
           >
@@ -267,10 +269,25 @@ export const DuasAndAdhkar: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSubTab('audio_library')}
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeSubTab === 'audio_library'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60 font-bold'
+                : 'text-stone-400 hover:text-white hover:bg-stone-800/60'
+            }`}
+          >
+            <Radio className="w-4 h-4 text-emerald-300 animate-pulse" />
+            <span>المكتبة الصوتية للأذكار</span>
+            <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded-md font-mono">
+              MP3
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('masbaha_duas')}
-            className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
               activeSubTab === 'masbaha_duas'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60 font-bold'
                 : 'text-stone-400 hover:text-white hover:bg-stone-800/60'
             }`}
           >
@@ -280,9 +297,20 @@ export const DuasAndAdhkar: React.FC = () => {
         </div>
       </div>
 
-      {activeSubTab === 'hisn' ? (
-        <HisnAlmuslimSection onSendToMasbaha={handleSendFromHisnToMasbaha} />
-      ) : (
+      {activeSubTab === 'hisn' && (
+        <HisnAlmuslimSection
+          onSendToMasbaha={handleSendFromHisnToMasbaha}
+          onOpenAudioLibrary={() => setActiveSubTab('audio_library')}
+        />
+      )}
+
+      {activeSubTab === 'audio_library' && (
+        <div className="space-y-6">
+          <AdhkarAudioPlayer />
+        </div>
+      )}
+
+      {activeSubTab === 'masbaha_duas' && (
         <div className="space-y-6">
           {/* Top Hero: Digital Masbaha Feature */}
           <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-emerald-950 via-stone-900 to-stone-900 border border-emerald-500/30 shadow-xl">

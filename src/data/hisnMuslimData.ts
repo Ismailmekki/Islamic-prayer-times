@@ -18,6 +18,8 @@ export interface HisnDhikr {
   count: number;
   virtue?: string;
   reference: string;
+  studioAudioUrl?: string;
+  studioReciter?: string;
 }
 
 export interface HisnCategory {

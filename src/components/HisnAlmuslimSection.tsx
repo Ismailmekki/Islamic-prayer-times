@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Shield,
   Search,
@@ -21,6 +21,8 @@ import {
   Send,
   X,
   Volume2,
+  Square,
+  Radio,
 } from 'lucide-react';
 import {
   HISN_ALMUSLIM_ITEMS,
@@ -28,21 +30,133 @@ import {
   HisnDhikr,
 } from '../data/hisnMuslimData';
 import { soundService } from '../utils/soundService';
+import { AdhkarAudioPlayer } from './AdhkarAudioPlayer';
 
 interface HisnAlmuslimSectionProps {
   onSendToMasbaha?: (text: string, count: number) => void;
+  onOpenAudioLibrary?: () => void;
 }
 
 const FAVORITES_STORAGE_KEY = 'salati_hisn_favorites_v1';
 
 export const HisnAlmuslimSection: React.FC<HisnAlmuslimSectionProps> = ({
   onSendToMasbaha,
+  onOpenAudioLibrary,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [counters, setCounters] = useState<Record<string, number>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sharedToast, setSharedToast] = useState<string | null>(null);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [showAudioSuite, setShowAudioSuite] = useState<boolean>(true);
+
+  const cardAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Clean up any active speech synthesis or audio on component unmount
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      if (cardAudioRef.current) {
+        cardAudioRef.current.pause();
+        cardAudioRef.current.src = '';
+      }
+    };
+  }, []);
+
+  const fallbackToTTS = (item: HisnDhikr) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setSharedToast('عذراً، متصفحك لا يدعم خاصية القراءة الصوتية المباشرة');
+      setTimeout(() => setSharedToast(null), 2500);
+      return;
+    }
+
+    const cleanText = item.arabicText
+      .replace(/\(\d+\)/g, '')
+      .replace(/[•\(\)]/g, ' ')
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'ar-SA';
+    utterance.rate = 0.85;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const arabicVoice = voices.find(
+      (v) => v.lang.startsWith('ar') || v.name.toLowerCase().includes('arabic')
+    );
+    if (arabicVoice) {
+      utterance.voice = arabicVoice;
+    }
+
+    utterance.onstart = () => {
+      setPlayingAudioId(item.id);
+    };
+    utterance.onend = () => {
+      setPlayingAudioId(null);
+    };
+    utterance.onerror = () => {
+      setPlayingAudioId(null);
+    };
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handlePlayAudio = (item: HisnDhikr, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+
+    // Toggle off if currently playing this item
+    if (playingAudioId === item.id) {
+      if (cardAudioRef.current) {
+        cardAudioRef.current.pause();
+        cardAudioRef.current.currentTime = 0;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      setPlayingAudioId(null);
+      return;
+    }
+
+    // Stop existing audio and speech
+    if (cardAudioRef.current) {
+      cardAudioRef.current.pause();
+      cardAudioRef.current.currentTime = 0;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    // If item has authentic studio recording from ashefaa.com
+    if (item.studioAudioUrl) {
+      if (!cardAudioRef.current) {
+        cardAudioRef.current = new Audio();
+      }
+      cardAudioRef.current.src = item.studioAudioUrl;
+      cardAudioRef.current.play().then(() => {
+        setPlayingAudioId(item.id);
+        setSharedToast(`جاري تشغيل التسجيل الصوتي (${item.studioReciter || 'استوديو نقي'})`);
+        setTimeout(() => setSharedToast(null), 3000);
+      }).catch((err: unknown) => {
+        console.warn('Direct audio play failed, falling back to TTS', err);
+        fallbackToTTS(item);
+      });
+
+      cardAudioRef.current.onended = () => {
+        setPlayingAudioId(null);
+      };
+      cardAudioRef.current.onerror = () => {
+        setPlayingAudioId(null);
+        fallbackToTTS(item);
+      };
+      return;
+    }
+
+    // Otherwise use speech synthesis
+    fallbackToTTS(item);
+  };
 
   // Favorites state persisted in localStorage
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -202,6 +316,22 @@ export const HisnAlmuslimSection: React.FC<HisnAlmuslimSectionProps> = ({
             <p className="text-xs sm:text-sm text-stone-300 max-w-2xl leading-relaxed">
               جمعٌ محقق للأدعية والأذكار النبوية المأثورة الصحيحة من كتاب «حصن المسلم» للشيخ سعيد بن وهف القحطاني رحمه الله، مع ميزة التفضيل، البحث الفوري، وعداد التكرار.
             </p>
+
+            {/* Audio Suite Shortcut Button */}
+            <div className="pt-2 flex items-center gap-2">
+              <button
+                onClick={() => setShowAudioSuite(!showAudioSuite)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950/50 cursor-pointer border border-emerald-400/40"
+              >
+                <Radio className="w-4 h-4 text-emerald-200 animate-pulse" />
+                <span>
+                  {showAudioSuite ? 'إخفاء مشغل الصوتيات' : 'المكتبة الصوتية لأذكار الصباح والمساء (العفاسي والدريهم)'}
+                </span>
+                <span className="text-[10px] bg-black/30 px-1.5 py-0.5 rounded-full font-mono text-emerald-200">
+                  MP3
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Quick Metrics Bar */}
@@ -229,6 +359,13 @@ export const HisnAlmuslimSection: React.FC<HisnAlmuslimSectionProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Dedicated Adhkar Audio Player Suite */}
+      {showAudioSuite && (
+        <div className="transition-all duration-300">
+          <AdhkarAudioPlayer />
+        </div>
+      )}
 
       {/* Search & Filter Toolbar */}
       <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-stone-800 space-y-4 shadow-lg text-right">
@@ -407,8 +544,43 @@ export const HisnAlmuslimSection: React.FC<HisnAlmuslimSectionProps> = ({
 
                 {/* Bottom Actions Bar */}
                 <div className="flex items-center justify-between gap-2 pt-2 border-t border-stone-800/60">
-                  {/* Left: Quick Utilities (Copy, Share, Send to Masbaha) */}
+                  {/* Left: Quick Utilities (Audio Recitation, Copy, Share, Send to Masbaha) */}
                   <div className="flex items-center gap-1.5">
+                    {/* Audio recitation button */}
+                    <button
+                      onClick={(e) => handlePlayAudio(item, e)}
+                      className={`px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
+                        playingAudioId === item.id
+                          ? 'bg-emerald-600 text-white border-emerald-400 shadow-md shadow-emerald-950/60 ring-2 ring-emerald-400/40 animate-pulse'
+                          : item.studioAudioUrl
+                          ? 'bg-amber-950/40 hover:bg-amber-900/60 border-amber-600/40 text-amber-300'
+                          : 'bg-stone-950 hover:bg-stone-800 border-stone-800 text-stone-300 hover:text-emerald-400'
+                      }`}
+                      title={
+                        playingAudioId === item.id
+                          ? 'إيقاف الاستماع'
+                          : item.studioAudioUrl
+                          ? `استماع لتسجيل الاستوديو النقي (${item.studioReciter || 'القارئ'})`
+                          : 'قراءة صوتية للذكر'
+                      }
+                    >
+                      {playingAudioId === item.id ? (
+                        <>
+                          <Square className="w-3.5 h-3.5 fill-white" />
+                          <span className="text-[11px] font-bold">إيقاف</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5" />
+                          {item.studioAudioUrl && (
+                            <span className="text-[10px] font-semibold hidden sm:inline">
+                              استوديو
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </button>
+
                     <button
                       onClick={(e) => handleCopy(item, e)}
                       className="p-2 rounded-xl bg-stone-950 hover:bg-stone-800 border border-stone-800 text-stone-300 hover:text-white transition-colors cursor-pointer"
