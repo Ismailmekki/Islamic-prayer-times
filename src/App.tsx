@@ -13,6 +13,7 @@ import { QuranReader } from './components/QuranReader';
 import { SalatIbrahimiyaSection } from './components/SalatIbrahimiyaSection';
 import { DuasAndAdhkar } from './components/DuasAndAdhkar';
 import { ElectronicTasbih } from './components/ElectronicTasbih';
+import { QuranRadio } from './components/QuranRadio';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { CitySelectorModal } from './components/CitySelectorModal';
@@ -22,7 +23,7 @@ import { ADHAN_VOICES } from './data/adhanSounds';
 import { calculateDailyPrayerTimes, getPrayerList } from './utils/prayerTimes';
 import { COUNTRIES_AND_STATES } from './data/countriesAndStates';
 import { backgroundAdhanService } from './services/backgroundAdhanService';
-import { Clock, Volume2, Compass, MapPin, BookOpen, Sparkles, Heart, CircleDot } from 'lucide-react';
+import { Clock, Volume2, Compass, MapPin, BookOpen, Sparkles, Heart, CircleDot, Radio } from 'lucide-react';
 
 export default function App() {
   // Navigation tab state
@@ -75,7 +76,9 @@ export default function App() {
         location.latitude,
         location.longitude,
         calculationMethod,
-        juristicMethod
+        juristicMethod,
+        undefined,
+        location.timezone
       );
       const prayerList = getPrayerList(times, now);
       return {
@@ -165,13 +168,14 @@ export default function App() {
     { id: 'prayers', label: 'المواقيت', icon: Clock },
     { id: 'adhkar', label: 'الأذكار', icon: Sparkles },
     { id: 'quran', label: 'القرآن', icon: BookOpen },
+    { id: 'radio', label: 'الراديو', icon: Radio },
     { id: 'qibla', label: 'القبلة', icon: Compass },
     { id: 'tasbih', label: 'السبحة', icon: CircleDot },
     { id: 'adhan', label: 'الأذان', icon: Volume2 },
   ];
 
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col selection:bg-emerald-600 selection:text-white pb-20 lg:pb-8 bg-islamic-pattern">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-stone-950 text-stone-100 flex flex-col selection:bg-emerald-600 selection:text-white pb-20 lg:pb-8 bg-islamic-pattern">
       {/* Offline connectivity indicator */}
       <OfflineIndicator />
 
@@ -189,7 +193,7 @@ export default function App() {
       />
 
       {/* Main Viewport Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl w-full min-w-0 overflow-x-hidden mx-auto px-3 sm:px-6 lg:px-8 py-6">
         {/* Subtle PWA download banner on home screen */}
         {currentTab === 'prayers' && (
           <div className="mb-6">
@@ -238,6 +242,8 @@ export default function App() {
 
         {currentTab === 'quran' && <QuranReader />}
 
+        {currentTab === 'radio' && <QuranRadio />}
+
         {currentTab === 'ibrahimiya' && <SalatIbrahimiyaSection />}
 
         {currentTab === 'adhkar' && <DuasAndAdhkar />}
@@ -256,10 +262,11 @@ export default function App() {
       </footer>
 
       {/* Mobile Fixed Bottom Tab Bar (Thumb Zone) */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-stone-900/95 backdrop-blur-md border-t border-stone-800 grid grid-cols-6 items-center h-16 px-1">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-stone-900/95 backdrop-blur-md border-t border-stone-800 grid grid-cols-7 items-center h-16 px-0.5">
         {mobileBottomTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;
+          const isRadio = tab.id === 'radio';
           return (
             <button
               key={tab.id}
@@ -267,12 +274,21 @@ export default function App() {
                 setCurrentTab(tab.id);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center h-full transition-colors ${
-                isActive ? 'text-emerald-400 font-semibold' : 'text-stone-400 hover:text-stone-200'
+              className={`flex flex-col items-center justify-center h-full transition-colors relative ${
+                isActive
+                  ? isRadio
+                    ? 'text-rose-400 font-bold'
+                    : 'text-emerald-400 font-semibold'
+                  : 'text-stone-400 hover:text-stone-200'
               }`}
             >
-              <Icon className="w-5 h-5" />
-              <span className="text-[10px] mt-1 tracking-tight truncate max-w-[50px]">
+              <div className="relative">
+                <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
+                {isRadio && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                )}
+              </div>
+              <span className="text-[9px] sm:text-[10px] mt-1 tracking-tight truncate max-w-[46px]">
                 {tab.label}
               </span>
             </button>

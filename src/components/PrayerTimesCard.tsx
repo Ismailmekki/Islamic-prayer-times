@@ -75,7 +75,10 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
     now,
     location.latitude,
     location.longitude,
-    calculationMethod
+    calculationMethod,
+    'standard',
+    undefined,
+    location.timezone
   );
 
   const prayerList = getPrayerList(times, now);

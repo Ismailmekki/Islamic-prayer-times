@@ -9,6 +9,7 @@ import {
   Sparkles,
   RefreshCw,
   Share2,
+  GraduationCap,
 } from 'lucide-react';
 import {
   AVAILABLE_TAFSIR_BOOKS,
@@ -17,6 +18,7 @@ import {
   tafsirService,
 } from '../services/tafsirService';
 import { ALL_SURAHS, SurahMeta } from '../data/quranData';
+import { EducationalTafsirModal } from './EducationalTafsirModal';
 
 interface TafsirSectionProps {
   initialPage?: number;
@@ -41,6 +43,7 @@ export const TafsirSection: React.FC<TafsirSectionProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [educationalModalVerseKey, setEducationalModalVerseKey] = useState<string | null>(null);
 
   // Load Tafsir whenever page, surah, or book changes
   useEffect(() => {
@@ -238,23 +241,34 @@ export const TafsirSection: React.FC<TafsirSectionProps> = ({
                   </span>
                 </div>
 
-                <button
-                  onClick={() => copyTafsir(item)}
-                  className="px-2.5 py-1 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-800 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                  title="نسخ تفسير هذه الآية"
-                >
-                  {copiedKey === item.verseKey ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">تم النسخ</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>نسخ التفسير</span>
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEducationalModalVerseKey(item.verseKey)}
+                    className="px-2.5 py-1 rounded-xl bg-emerald-950/80 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                    title="عرض التفسير التعليمي الميسر والوقفات التدبرية"
+                  >
+                    <GraduationCap className="w-3.5 h-3.5 text-amber-300" />
+                    <span>التفسير التعليمي والتدبر</span>
+                  </button>
+
+                  <button
+                    onClick={() => copyTafsir(item)}
+                    className="px-2.5 py-1 rounded-xl bg-stone-950 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-800 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                    title="نسخ تفسير هذه الآية"
+                  >
+                    {copiedKey === item.verseKey ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">تم النسخ</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>نسخ</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Tafsir Content with Arabic typography */}
@@ -265,6 +279,16 @@ export const TafsirSection: React.FC<TafsirSectionProps> = ({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Educational Tafsir Modal */}
+      {educationalModalVerseKey && (
+        <EducationalTafsirModal
+          isOpen={true}
+          onClose={() => setEducationalModalVerseKey(null)}
+          verseKey={educationalModalVerseKey}
+          onNavigateVerse={(newKey) => setEducationalModalVerseKey(newKey)}
+        />
       )}
     </div>
   );

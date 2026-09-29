@@ -3,10 +3,52 @@ import { CalculationMethod, CalculationMethodId, JuristicMethod, PrayerName, Pra
 export const CALCULATION_METHODS: Record<CalculationMethodId, CalculationMethod> = {
   MAKKAH: {
     id: 'MAKKAH',
-    nameArabic: 'أم القرى (مكة المكرمة)',
+    nameArabic: 'أم القرى (مكة المكرمة والمملكة العربية السعودية)',
     nameEnglish: 'Umm al-Qura University, Makkah',
     fajrAngle: 18.5,
     ishaIntervalMinutes: 90, // 90 min after Maghrib (120 in Ramadan)
+  },
+  QATAR: {
+    id: 'QATAR',
+    nameArabic: 'وزارة الأوقاف والشؤون الإسلامية القطرية',
+    nameEnglish: 'Ministry of Awqaf, Qatar',
+    fajrAngle: 18,
+    ishaIntervalMinutes: 90, // 90 min after Maghrib (120 in Ramadan)
+  },
+  FRANCE_UOIF: {
+    id: 'FRANCE_UOIF',
+    nameArabic: 'اتحاد مسلمي فرنسا (UOIF - زاوية 12° المعتمدة)',
+    nameEnglish: 'Musulmans de France / UOIF (12°)',
+    fajrAngle: 12,
+    ishaAngle: 12,
+  },
+  FRANCE_15: {
+    id: 'FRANCE_15',
+    nameArabic: 'مساجد فرنسا الكبرى (زاوية 15°)',
+    nameEnglish: 'French Mosques & Islamic Centres (15°)',
+    fajrAngle: 15,
+    ishaAngle: 15,
+  },
+  FRANCE_18: {
+    id: 'FRANCE_18',
+    nameArabic: 'مسجد باريس الكبير (زاوية 18°)',
+    nameEnglish: 'Grande Mosquée de Paris (18°)',
+    fajrAngle: 18,
+    ishaAngle: 18,
+  },
+  SUDAN: {
+    id: 'SUDAN',
+    nameArabic: 'مجمع الفقه الإسلامي بالسودان',
+    nameEnglish: 'Islamic Fiqh Academy of Sudan',
+    fajrAngle: 18,
+    ishaAngle: 17.5,
+  },
+  LIBYA: {
+    id: 'LIBYA',
+    nameArabic: 'الهيئة العامة للأوقاف والشؤون الإسلامية بليبيا',
+    nameEnglish: 'General Authority of Awqaf, Libya',
+    fajrAngle: 18,
+    ishaAngle: 17.5,
   },
   MWL: {
     id: 'MWL',
@@ -21,6 +63,27 @@ export const CALCULATION_METHODS: Record<CalculationMethodId, CalculationMethod>
     nameEnglish: 'Egyptian General Authority of Survey',
     fajrAngle: 19.5,
     ishaAngle: 17.5,
+  },
+  ALGERIA: {
+    id: 'ALGERIA',
+    nameArabic: 'وزارة الشؤون الدينية والأوقاف بالجزائر',
+    nameEnglish: 'Ministry of Religious Affairs, Algeria',
+    fajrAngle: 18,
+    ishaAngle: 17,
+  },
+  TUNISIA: {
+    id: 'TUNISIA',
+    nameArabic: 'وزارة الشؤون الدينية بتونس',
+    nameEnglish: 'Ministry of Religious Affairs, Tunisia',
+    fajrAngle: 18,
+    ishaAngle: 18,
+  },
+  MOROCCO: {
+    id: 'MOROCCO',
+    nameArabic: 'وزارة الأوقاف والشؤون الإسلامية بالمغرب',
+    nameEnglish: 'Ministry of Habous & Islamic Affairs, Morocco',
+    fajrAngle: 19,
+    ishaAngle: 17,
   },
   ISNA: {
     id: 'ISNA',
@@ -49,13 +112,6 @@ export const CALCULATION_METHODS: Record<CalculationMethodId, CalculationMethod>
     nameEnglish: 'Ministry of Awqaf, Kuwait',
     fajrAngle: 18,
     ishaAngle: 17.5,
-  },
-  QATAR: {
-    id: 'QATAR',
-    nameArabic: 'وزارة الأوقاف القطرية',
-    nameEnglish: 'Ministry of Awqaf, Qatar',
-    fajrAngle: 18,
-    ishaIntervalMinutes: 90,
   },
 };
 
@@ -116,6 +172,64 @@ export interface CalculatedTimes {
   qiyam: Date;
 }
 
+export interface PrayerTimeAdjustments {
+  fajr: number;
+  sunrise: number;
+  dhuhr: number;
+  asr: number;
+  maghrib: number;
+  isha: number;
+}
+
+export function getSavedPrayerAdjustments(): PrayerTimeAdjustments {
+  try {
+    const val = localStorage.getItem('salati_prayer_adjustments');
+    if (val) {
+      return JSON.parse(val);
+    }
+  } catch {}
+  return { fajr: 0, sunrise: 0, dhuhr: 0, asr: 0, maghrib: 0, isha: 0 };
+}
+
+export function savePrayerAdjustments(adj: PrayerTimeAdjustments): void {
+  try {
+    localStorage.setItem('salati_prayer_adjustments', JSON.stringify(adj));
+  } catch {}
+}
+
+export function getTimezoneOffsetHours(timeZoneName?: string, date: Date = new Date()): number {
+  if (!timeZoneName) {
+    return -date.getTimezoneOffset() / 60;
+  }
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZoneName,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const getPart = (type: string) => parseInt(parts.find((p) => p.type === type)?.value || '0', 10);
+    const year = getPart('year');
+    const month = getPart('month');
+    const day = getPart('day');
+    let hour = getPart('hour');
+    if (hour === 24) hour = 0;
+    const minute = getPart('minute');
+    const second = getPart('second');
+
+    const asUTC = Date.UTC(year, month - 1, day, hour, minute, second);
+    const diffMs = asUTC - date.getTime();
+    return diffMs / (1000 * 60 * 60);
+  } catch (e) {
+    return -date.getTimezoneOffset() / 60;
+  }
+}
+
 export function getSavedFridayOffsetMinutes(): number {
   try {
     const val = localStorage.getItem('salati_friday_offset');
@@ -139,68 +253,119 @@ export function calculateDailyPrayerTimes(
   longitude: number,
   methodId: CalculationMethodId = 'MAKKAH',
   juristic: JuristicMethod = 'standard',
-  fridayOffsetMinutes?: number
+  fridayOffsetMinutes?: number,
+  targetTimezone?: string
 ): CalculatedTimes {
   const method = CALCULATION_METHODS[methodId] || CALCULATION_METHODS.MAKKAH;
   const julian = getJulianDate(date);
   const sun = calculateSunPosition(julian);
 
-  // Timezone offset in hours
-  const timezoneOffset = -date.getTimezoneOffset() / 60;
+  // Accurate timezone offset for the target city / country
+  const timezoneOffset = getTimezoneOffsetHours(targetTimezone, date);
 
-  // Dhuhr (solar transit noon)
+  // Dhuhr (solar transit noon) in local decimal hours
   const dhuhrHour = fixHour(12 + timezoneOffset - longitude / 15.0 - sun.equationOfTime);
 
-  // Helper for angle zenith
-  function timeForSunAngle(angle: number, isMorning: boolean): number {
-    const latRad = degToRad(latitude);
-    const decRad = degToRad(sun.declination);
+  const latRad = degToRad(latitude);
+  const decRad = degToRad(sun.declination);
+
+  // Helper for angle zenith with high latitude safety
+  function timeForSunAngle(angle: number, isMorning: boolean): { hour: number; isExtreme: boolean } {
     const cosHourAngle =
       (Math.sin(degToRad(-angle)) - Math.sin(latRad) * Math.sin(decRad)) /
       (Math.cos(latRad) * Math.cos(decRad));
 
-    if (cosHourAngle > 1) return isMorning ? 0 : 24; // Sun never rises
-    if (cosHourAngle < -1) return isMorning ? 12 : 12; // Sun never sets
+    if (cosHourAngle > 1 || cosHourAngle < -1 || isNaN(cosHourAngle)) {
+      return { hour: isMorning ? 0 : 24, isExtreme: true };
+    }
 
     const hourAngle = radToDeg(Math.acos(cosHourAngle)) / 15.0;
-    return isMorning ? dhuhrHour - hourAngle : dhuhrHour + hourAngle;
+    return {
+      hour: isMorning ? dhuhrHour - hourAngle : dhuhrHour + hourAngle,
+      isExtreme: false,
+    };
   }
 
   // Sunrise and Sunset (approx 0.833 degrees for atmospheric refraction + sun diameter)
-  const sunriseHour = timeForSunAngle(0.833, true);
-  const sunsetHour = timeForSunAngle(0.833, false);
+  const sunriseRes = timeForSunAngle(0.833, true);
+  const sunsetRes = timeForSunAngle(0.833, false);
 
-  // Fajr
-  const fajrHour = timeForSunAngle(method.fajrAngle, true);
+  // Fallback for extreme polar conditions (if sun never rises or sets)
+  const sunriseHour = sunriseRes.isExtreme ? 6.0 : sunriseRes.hour;
+  const sunsetHour = sunsetRes.isExtreme ? 18.0 : sunsetRes.hour;
 
-  // Asr shadow
+  // Day & Night duration (needed for European / High-Latitude rules like France & northern cities)
+  let nightDuration = fixHour(sunriseHour - sunsetHour);
+  if (nightDuration <= 0) nightDuration += 24;
+
+  // 1. Fajr calculation with High-Latitude fallback for France and Northern Europe
+  let fajrHour: number;
+  const fajrRes = timeForSunAngle(method.fajrAngle, true);
+
+  if (fajrRes.isExtreme || Math.abs(latitude) >= 48) {
+    // High-Latitude condition (e.g. Paris, Lille, Strasbourg, London during summer)
+    // Use Angle-based portion or 1/7th of night rule
+    const fajrPortion = (method.fajrAngle / 60) * nightDuration;
+    const maxFajrBeforeSunrise = Math.min(fajrPortion, nightDuration / 2);
+    fajrHour = fixHour(sunriseHour - maxFajrBeforeSunrise);
+  } else {
+    fajrHour = fajrRes.hour;
+    // Check if Fajr is excessively early (more than half the night before sunrise)
+    let fajrInterval = fixHour(sunriseHour - fajrHour);
+    if (fajrInterval <= 0) fajrInterval += 24;
+    if (fajrInterval > nightDuration / 2) {
+      fajrHour = fixHour(sunriseHour - (method.fajrAngle / 60) * nightDuration);
+    }
+  }
+
+  // 2. Asr calculation
   const shadowMultiplier = juristic === 'hanafi' ? 2 : 1;
-  const decRad = degToRad(sun.declination);
-  const latRad = degToRad(latitude);
   const angleAsr = radToDeg(
     Math.atan(1.0 / (shadowMultiplier + Math.tan(Math.abs(latRad - decRad))))
   );
-  const asrHour = timeForSunAngle(90 - angleAsr, false);
+  const asrRes = timeForSunAngle(90 - angleAsr, false);
+  const asrHour = asrRes.isExtreme ? dhuhrHour + 3.0 : asrRes.hour;
 
-  // Maghrib
-  const maghribHour = sunsetHour + 2 / 60; // 2 minutes added for precautions
+  // 3. Maghrib (sunset + 2 min precaution)
+  const maghribHour = sunsetHour + 2 / 60;
 
-  // Isha
+  // 4. Isha calculation
   let ishaHour: number;
+  // Check if Ramadan is active for Umm Al-Qura and Qatar (120 min instead of 90 min)
+  const hijriInfo = getHijriDate(date);
+  const isRamadan = hijriInfo.monthIndex === 8; // Month 9 (Ramadan, index 8)
+
   if (method.ishaIntervalMinutes) {
-    ishaHour = maghribHour + method.ishaIntervalMinutes / 60;
+    const ishaMinutes = (method.id === 'MAKKAH' || method.id === 'QATAR') && isRamadan ? 120 : method.ishaIntervalMinutes;
+    ishaHour = maghribHour + ishaMinutes / 60;
   } else if (method.ishaAngle) {
-    ishaHour = timeForSunAngle(method.ishaAngle, false);
+    const ishaRes = timeForSunAngle(method.ishaAngle, false);
+    if (ishaRes.isExtreme || Math.abs(latitude) >= 48) {
+      const ishaPortion = (method.ishaAngle / 60) * nightDuration;
+      const maxIshaAfterSunset = Math.min(ishaPortion, nightDuration / 2);
+      ishaHour = fixHour(sunsetHour + maxIshaAfterSunset);
+    } else {
+      ishaHour = ishaRes.hour;
+      let ishaInterval = fixHour(ishaHour - sunsetHour);
+      if (ishaInterval <= 0) ishaInterval += 24;
+      if (ishaInterval > nightDuration / 2) {
+        ishaHour = fixHour(sunsetHour + (method.ishaAngle / 60) * nightDuration);
+      }
+    }
   } else {
     ishaHour = maghribHour + 1.5;
   }
 
+  // Load user manual adjustments (± minutes)
+  const adjustments = getSavedPrayerAdjustments();
+
   // Convert decimal hours into real Date objects
-  const makeDate = (hourVal: number, dayOffset = 0): Date => {
+  const makeDate = (hourVal: number, manualOffsetMin = 0, dayOffset = 0): Date => {
+    const adjustedHourVal = hourVal + manualOffsetMin / 60;
     const result = new Date(date);
     result.setDate(result.getDate() + dayOffset);
-    let h = Math.floor(hourVal);
-    let remMinutes = (hourVal - h) * 60;
+    let h = Math.floor(adjustedHourVal);
+    let remMinutes = (adjustedHourVal - h) * 60;
     let m = Math.floor(remMinutes);
     let s = Math.floor((remMinutes - m) * 60);
 
@@ -216,20 +381,19 @@ export function calculateDailyPrayerTimes(
     return result;
   };
 
-  const fajrDate = makeDate(fajrHour);
-  const sunriseDate = makeDate(sunriseHour);
+  const fajrDate = makeDate(fajrHour, adjustments.fajr);
+  const sunriseDate = makeDate(sunriseHour, adjustments.sunrise);
   // Salat al-Duha starts ~20 minutes after sunrise (after the sun rises a spear height / خروج وقت الكراهة)
   const duhaDate = new Date(sunriseDate.getTime() + 20 * 60 * 1000);
-  const dhuhrDate = makeDate(dhuhrHour);
+  const dhuhrDate = makeDate(dhuhrHour, adjustments.dhuhr);
   const offsetMin = fridayOffsetMinutes !== undefined ? fridayOffsetMinutes : getSavedFridayOffsetMinutes();
   const jumuahDate = new Date(dhuhrDate.getTime() + offsetMin * 60 * 1000);
   const jumuahFirstAdhan = new Date(jumuahDate.getTime() - 25 * 60 * 1000);
-  const asrDate = makeDate(asrHour);
-  const maghribDate = makeDate(maghribHour);
-  const ishaDate = makeDate(ishaHour);
+  const asrDate = makeDate(asrHour, adjustments.asr);
+  const maghribDate = makeDate(maghribHour, adjustments.maghrib);
+  const ishaDate = makeDate(ishaHour, adjustments.isha);
 
   // Qiyam (Last third of the night between Maghrib and Next Fajr)
-  // Approximate next Fajr as 24h after current Fajr
   const nightDurationMs = fajrDate.getTime() + 24 * 3600 * 1000 - maghribDate.getTime();
   const qiyamDate = new Date(maghribDate.getTime() + (nightDurationMs * 2) / 3);
 

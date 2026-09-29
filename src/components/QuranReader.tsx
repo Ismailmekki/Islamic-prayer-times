@@ -47,9 +47,12 @@ import { MushafPageReader } from './MushafPageReader';
 import { TafsirSection } from './TafsirSection';
 import { QuranMemorizer } from './QuranMemorizer';
 import { KhatmahManager } from './KhatmahManager';
+import { EducationalTafsirModal } from './EducationalTafsirModal';
+import { QuranRadio } from './QuranRadio';
+import { tafsirService } from '../services/tafsirService';
 
 export type ReadingTheme = 'light' | 'dark' | 'sepia';
-export type QuranReaderMode = 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah';
+export type QuranReaderMode = 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah' | 'radio';
 
 export const QuranReader: React.FC = () => {
   // Mode: 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah'
@@ -107,6 +110,32 @@ export const QuranReader: React.FC = () => {
   const [downloadingTrackId, setDownloadingTrackId] = useState<string | null>(null);
   const [downloadToast, setDownloadToast] = useState<string | null>(null);
   const [activeMirrorIndex, setActiveMirrorIndex] = useState<number>(0);
+
+  // Educational Tafsir Modal State
+  const [educationalModalVerseKey, setEducationalModalVerseKey] = useState<string | null>(null);
+  const [educationalModalVerseText, setEducationalModalVerseText] = useState<string | undefined>(undefined);
+
+  // Surah Verses List for Interactive Reading & Educational Tafsir
+  const [surahVerses, setSurahVerses] = useState<
+    Array<{ verseKey: string; ayahNumber: number; text: string; surahNumber: number }>
+  >([]);
+  const [isLoadingSurahVerses, setIsLoadingSurahVerses] = useState<boolean>(false);
+  const [showSurahVerses, setShowSurahVerses] = useState<boolean>(true);
+
+  // Fetch Surah Verses when currentSurah changes
+  useEffect(() => {
+    let isCancelled = false;
+    setIsLoadingSurahVerses(true);
+    tafsirService.getVersesForSurah(currentSurah.number).then((verses) => {
+      if (!isCancelled) {
+        setSurahVerses(verses);
+        setIsLoadingSurahVerses(false);
+      }
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentSurah.number]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const watchdogTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -671,9 +700,25 @@ export const QuranReader: React.FC = () => {
               <Shield className="w-3.5 h-3.5" />
               <span>الرقية الشرعية</span>
             </button>
+
+            <button
+              onClick={() => setActiveMode('radio')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                activeMode === 'radio'
+                  ? 'bg-rose-600 text-white shadow-md shadow-rose-700/50'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5 text-rose-400" />
+              <span>راديو القرآن 24/7</span>
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Render 24/7 Quran Radio */}
+      {activeMode === 'radio' && <QuranRadio />}
 
       {/* Render Mushaf Page Reader */}
       {activeMode === 'mushaf' && (
@@ -1184,6 +1229,97 @@ export const QuranReader: React.FC = () => {
       )}
 
       {/* ========================================================= */}
+      {/* Interactive Surah Verses with Educational Tafsir (Quran Mode) */}
+      {/* ========================================================= */}
+      {activeMode === 'quran' && (
+        <div className="p-4 sm:p-6 rounded-3xl bg-stone-900/90 border border-emerald-500/30 text-right space-y-4 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <GraduationCap className="w-4 h-4" />
+                </span>
+                <h3 className="font-bold text-base text-white font-quran">
+                  قراءة وتفسير آيات سورة {currentSurah.name} ({currentSurah.numberOfAyahs} آية)
+                </h3>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-sans font-bold">
+                  انقر على أي آية للتفسير التعليمي
+                </span>
+              </div>
+              <p className="text-xs text-stone-400">
+                انقر على أي آية لعرض نافذة منبثقة تفاعلية تحتوي على التفسير الميسر والوقفات التدبرية والعمل بالآية المستمدة من مصادر موثوقة.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                onClick={() => setShowSurahVerses(!showSurahVerses)}
+                className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-200 text-xs font-semibold border border-stone-700 transition cursor-pointer"
+              >
+                {showSurahVerses ? 'طي نص الآيات' : 'عرض نص الآيات'}
+              </button>
+            </div>
+          </div>
+
+          {showSurahVerses && (
+            <div className="space-y-3">
+              {/* Basmalah banner if not Surah At-Tawbah (9) */}
+              {currentSurah.number !== 9 && (
+                <div className="py-2.5 text-center font-quran text-lg sm:text-xl text-amber-300/90 select-none bg-stone-950/40 rounded-2xl border border-stone-800/60">
+                  بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
+                </div>
+              )}
+
+              {isLoadingSurahVerses ? (
+                <div className="p-8 text-center text-xs text-stone-400 flex items-center justify-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-400 animate-spin" />
+                  <span>جارٍ استحضار آيات سورة {currentSurah.name}...</span>
+                </div>
+              ) : surahVerses.length > 0 ? (
+                <div className="space-y-2.5 max-h-[560px] overflow-y-auto p-1 pr-1.5 scrollbar-thin">
+                  {surahVerses.map((ayah) => (
+                    <div
+                      key={ayah.verseKey}
+                      onClick={() => {
+                        setEducationalModalVerseKey(ayah.verseKey);
+                        setEducationalModalVerseText(ayah.text);
+                      }}
+                      className="group p-3.5 sm:p-4 rounded-2xl bg-stone-950/70 hover:bg-stone-850/90 border border-stone-800/90 hover:border-emerald-500/50 transition-all duration-200 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-right shadow-xs hover:shadow-emerald-950/30"
+                    >
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2 text-[11px] text-stone-400">
+                          <span className="font-bold text-emerald-400 font-quran">سورة {currentSurah.name}</span>
+                          <span>·</span>
+                          <span className="font-mono">آية {ayah.ayahNumber}</span>
+                        </div>
+                        <p className="font-quran text-base sm:text-lg text-amber-100/95 leading-relaxed group-hover:text-emerald-200 transition-colors">
+                          {ayah.text}
+                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-amber-400/30 text-amber-300 text-[10px] font-mono font-bold mx-1.5 align-middle bg-amber-950/30">
+                            {ayah.ayahNumber}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-2 self-end sm:self-center">
+                        <span className="text-[11px] px-3 py-1.5 rounded-xl bg-emerald-950/80 group-hover:bg-emerald-600 text-emerald-300 group-hover:text-white border border-emerald-500/40 font-bold transition-all flex items-center gap-1.5 shadow-xs">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>التفسير والتدبر</span>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-xs text-stone-400">
+                  تعذر تحميل نص آيات السورة، يُرجى التحقق من الاتصال بالإنترنت.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* 114 Surahs Audio Catalog (Quran Mode)                     */}
       {/* ========================================================= */}
       {activeMode === 'quran' && (
@@ -1622,6 +1758,23 @@ export const QuranReader: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* Educational Tafsir Modal */}
+      {educationalModalVerseKey && (
+        <EducationalTafsirModal
+          isOpen={true}
+          onClose={() => setEducationalModalVerseKey(null)}
+          verseKey={educationalModalVerseKey}
+          initialVerseText={educationalModalVerseText}
+          onNavigateVerse={(newKey) => {
+            setEducationalModalVerseKey(newKey);
+            const found = surahVerses.find((v) => v.verseKey === newKey);
+            if (found) {
+              setEducationalModalVerseText(found.text);
+            }
+          }}
+        />
       )}
     </div>
   );

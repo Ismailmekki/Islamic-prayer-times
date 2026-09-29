@@ -20,6 +20,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { ALL_SURAHS, SurahMeta } from '../data/quranData';
+import { EducationalTafsirModal } from './EducationalTafsirModal';
 
 interface AyahItem {
   id: number;
@@ -91,6 +92,10 @@ export const QuranMemorizer: React.FC = () => {
     } catch {}
     return new Set<string>();
   });
+
+  // Educational Tafsir Modal State
+  const [educationalModalVerseKey, setEducationalModalVerseKey] = useState<string | null>(null);
+  const [educationalModalVerseText, setEducationalModalVerseText] = useState<string | undefined>(undefined);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pauseTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -504,6 +509,19 @@ export const QuranMemorizer: React.FC = () => {
 
                   {/* Actions for this verse */}
                   <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                    {/* Educational Tafsir & Tadabbur */}
+                    <button
+                      onClick={() => {
+                        setEducationalModalVerseKey(ayah.verseKey);
+                        setEducationalModalVerseText(ayah.text);
+                      }}
+                      className="px-2.5 py-1 rounded-xl bg-stone-950 hover:bg-stone-850 text-amber-300 hover:text-white border border-stone-800 hover:border-amber-500/40 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                      title="عرض التفسير التعليمي الميسر والوقفات التدبرية"
+                    >
+                      <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>التفسير والتدبر</span>
+                    </button>
+
                     {/* Play single ayah */}
                     <button
                       onClick={() => startPlaying(ayah.ayahNumber - 1)}
@@ -576,6 +594,21 @@ export const QuranMemorizer: React.FC = () => {
             );
           })}
         </div>
+      )}
+
+      {/* Educational Tafsir Modal */}
+      {educationalModalVerseKey && (
+        <EducationalTafsirModal
+          isOpen={true}
+          onClose={() => setEducationalModalVerseKey(null)}
+          verseKey={educationalModalVerseKey}
+          initialVerseText={educationalModalVerseText}
+          onNavigateVerse={(newKey) => {
+            setEducationalModalVerseKey(newKey);
+            const found = ayahs.find((a) => a.verseKey === newKey);
+            if (found) setEducationalModalVerseText(found.text);
+          }}
+        />
       )}
     </div>
   );

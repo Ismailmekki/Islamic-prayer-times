@@ -23,7 +23,12 @@ import {
   Globe,
 } from 'lucide-react';
 import { CalculationMethodId, JuristicMethod, UserLocation } from '../types/prayer';
-import { CALCULATION_METHODS } from '../utils/prayerTimes';
+import {
+  CALCULATION_METHODS,
+  PrayerTimeAdjustments,
+  getSavedPrayerAdjustments,
+  savePrayerAdjustments,
+} from '../utils/prayerTimes';
 import { COUNTRIES_AND_STATES, CountryData, StateOrProvince } from '../data/countriesAndStates';
 import {
   backgroundAdhanService,
@@ -73,8 +78,8 @@ const PRE_ALERT_OPTIONS = [
   { minutes: 30, label: '30 دقيقة قبل الأذان' },
 ];
 
-// Quick Access Popular Countries
-const POPULAR_COUNTRIES = ['dz', 'sa', 'eg', 'ma', 'tn', 'ae', 'qa', 'kw', 'jo', 'ps', 'iq'];
+// Quick Access Popular Countries with prominent placement of France, Saudi Arabia, Qatar, Sudan, Libya, Algeria, etc.
+const POPULAR_COUNTRIES = ['fr', 'sa', 'qa', 'sd', 'ly', 'dz', 'eg', 'ma', 'tn', 'ae', 'kw', 'jo', 'ps', 'iq', 'tr', 'ye', 'om', 'sy', 'lb', 'uk', 'us', 'ca'];
 
 interface OnlineCityResult {
   displayName: string;
@@ -130,6 +135,33 @@ export const CitySelectorModal: React.FC<CitySelectorModalProps> = ({
 
   const [testAlertSuccess, setTestAlertSuccess] = useState<string | null>(null);
   const [selectionSuccess, setSelectionSuccess] = useState<string | null>(null);
+
+  // Manual ± minutes adjustment state
+  const [adjustments, setAdjustments] = useState<PrayerTimeAdjustments>(() => getSavedPrayerAdjustments());
+
+  const handleAdjustPrayer = (prayerKey: keyof PrayerTimeAdjustments, deltaMinutes: number) => {
+    const updated: PrayerTimeAdjustments = {
+      ...adjustments,
+      [prayerKey]: Math.max(-30, Math.min(30, adjustments[prayerKey] + deltaMinutes)),
+    };
+    setAdjustments(updated);
+    savePrayerAdjustments(updated);
+    soundService.playTasbeehClick();
+  };
+
+  const handleResetAdjustments = () => {
+    const reset: PrayerTimeAdjustments = {
+      fajr: 0,
+      sunrise: 0,
+      dhuhr: 0,
+      asr: 0,
+      maghrib: 0,
+      isha: 0,
+    };
+    setAdjustments(reset);
+    savePrayerAdjustments(reset);
+    soundService.playTasbeehClick();
+  };
 
   // Sync selected country if location changes
   useEffect(() => {
@@ -780,6 +812,41 @@ export const CitySelectorModal: React.FC<CitySelectorModalProps> = ({
                 </div>
               )}
 
+              {/* Audio Speaker & Lock-Screen Test Bar */}
+              <div className="p-3.5 rounded-2xl bg-stone-900/90 border border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 font-bold text-white">
+                    <Volume2 className="w-4 h-4 text-emerald-400" />
+                    <span>فحص صوت الأذان وشاشة القفل في جهازك</span>
+                  </div>
+                  <p className="text-[11px] text-stone-400">
+                    تأكد من عدم تفعيل وضع الصامت في هاتفك ليعمل صوت الأذان تلقائياً
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => {
+                      soundService.playTasbeehClick();
+                      setTestAlertSuccess('تم إرسال نقرة صوتية تجريبية');
+                      setTimeout(() => setTestAlertSuccess(null), 2500);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-semibold cursor-pointer"
+                  >
+                    🔊 تجربة الصوت
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await backgroundAdhanService.sendTestNotification(currentLocation.cityName);
+                      setTestAlertSuccess('تم إرسال إشعار تجريبي لشاشة القفل!');
+                      setTimeout(() => setTestAlertSuccess(null), 3000);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer shadow-xs"
+                  >
+                    📲 إرسال إشعار للشاشة
+                  </button>
+                </div>
+              </div>
+
               {/* Individual Prayer Alert Settings Cards */}
               <div className="space-y-3">
                 {PRAYERS_LIST.map((prayer) => {
@@ -1122,6 +1189,71 @@ export const CitySelectorModal: React.FC<CitySelectorModalProps> = ({
                     <div className="font-semibold text-sm mb-1">المذهب الحنفي</div>
                     <div className="text-[11px] text-stone-400">ظل الشيء مثليه</div>
                   </button>
+                </div>
+              </div>
+
+              {/* Manual ± Minutes Adjustment per Prayer */}
+              <div className="pt-3 border-t border-stone-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-bold text-white flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>تعديل يدوي لمواقيت الصلاة (دقائق ± للمطابقة مع مسجدي المحلي)</span>
+                    </label>
+                    <p className="text-[11px] text-stone-400">
+                      يمكنك تقديم أو تأخير موعد أي صلاة ببضع دقائق لمطابقة التوقيت المعتمد في مسجدك
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleResetAdjustments}
+                    className="px-2.5 py-1 text-[11px] rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 cursor-pointer"
+                  >
+                    إعادة ضبط (0)
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {[
+                    { key: 'fajr' as const, label: 'الفجر' },
+                    { key: 'sunrise' as const, label: 'الشروق' },
+                    { key: 'dhuhr' as const, label: 'الظهر' },
+                    { key: 'asr' as const, label: 'العصر' },
+                    { key: 'maghrib' as const, label: 'المغرب' },
+                    { key: 'isha' as const, label: 'العشاء' },
+                  ].map((p) => {
+                    const val = adjustments[p.key];
+                    return (
+                      <div
+                        key={p.key}
+                        className="p-2.5 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-between text-xs"
+                      >
+                        <span className="font-semibold text-stone-200">{p.label}</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleAdjustPrayer(p.key, -1)}
+                            className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-white flex items-center justify-center font-bold text-xs cursor-pointer active:scale-95"
+                            title="تأخير دقيقة (-1)"
+                          >
+                            -
+                          </button>
+                          <span
+                            className={`w-9 text-center font-mono font-bold ${
+                              val > 0 ? 'text-emerald-400' : val < 0 ? 'text-amber-400' : 'text-stone-400'
+                            }`}
+                          >
+                            {val > 0 ? `+${val}` : val} د
+                          </span>
+                          <button
+                            onClick={() => handleAdjustPrayer(p.key, 1)}
+                            className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-white flex items-center justify-center font-bold text-xs cursor-pointer active:scale-95"
+                            title="تقديم دقيقة (+1)"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

@@ -25,8 +25,11 @@ import {
   Compass,
   X,
   FileText,
+  GraduationCap,
 } from 'lucide-react';
 import { TafsirSection } from './TafsirSection';
+import { EducationalTafsirModal } from './EducationalTafsirModal';
+import { tafsirService } from '../services/tafsirService';
 import {
   SURAH_STARTING_PAGES,
   JUZ_STARTING_PAGES,
@@ -81,6 +84,15 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
   const [pageTheme, setPageTheme] = useState<'classic' | 'dark' | 'white'>('classic');
   const [isTafsirModalOpen, setIsTafsirModalOpen] = useState<boolean>(false);
 
+  // Interactive Educational Tafsir state
+  const [pageVerses, setPageVerses] = useState<
+    Array<{ verseKey: string; ayahNumber: number; text: string; surahNumber: number }>
+  >([]);
+  const [isLoadingPageVerses, setIsLoadingPageVerses] = useState<boolean>(false);
+  const [showInteractiveVerses, setShowInteractiveVerses] = useState<boolean>(true);
+  const [educationalModalVerseKey, setEducationalModalVerseKey] = useState<string | null>(null);
+  const [educationalModalVerseText, setEducationalModalVerseText] = useState<string | undefined>(undefined);
+
   // Input jump state
   const [inputPage, setInputPage] = useState<string>(currentPage.toString());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -95,7 +107,7 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
   const currentSurah = getSurahForPage(currentPage);
   const currentJuz = getJuzForPage(currentPage);
 
-  // Save current page
+  // Save current page and load its verses
   useEffect(() => {
     try {
       localStorage.setItem('salati_mushaf_current_page', currentPage.toString());
@@ -104,6 +116,19 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
     setIsLoadingImage(true);
     setImageError(false);
     setUseFallbackServer(false);
+
+    let isCancelled = false;
+    setIsLoadingPageVerses(true);
+    tafsirService.getVersesForPage(currentPage).then((verses) => {
+      if (!isCancelled) {
+        setPageVerses(verses);
+        setIsLoadingPageVerses(false);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
   }, [currentPage]);
 
   // Preload adjacent pages for instant flipping
@@ -444,6 +469,23 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
 
         {/* Right: Display & Tool Buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Educational Tafsir Button */}
+          <button
+            onClick={() => {
+              if (pageVerses.length > 0) {
+                setEducationalModalVerseKey(pageVerses[0].verseKey);
+                setEducationalModalVerseText(pageVerses[0].text);
+              } else {
+                setEducationalModalVerseKey(`${currentSurah.number}:1`);
+              }
+            }}
+            className="p-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95"
+            title="التفسير التعليمي والفوائد التدبرية الموثوقة لآيات الصفحة"
+          >
+            <GraduationCap className="w-4 h-4" />
+            <span>التفسير التعليمي والتدبر</span>
+          </button>
+
           {/* Tafsir Page Button */}
           <button
             onClick={() => setIsTafsirModalOpen(true)}
@@ -734,6 +776,110 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
         <p className="text-[11px] text-stone-500 mt-2 text-center">
           💡 يمكنك استخدام مفاتيح الأسهم (← و →) في لوحة المفاتيح لتقليب الصفحات يمنة ويسرة بسهولة.
         </p>
+
+        {/* Interactive Verses Panel with One-Click Educational Tafsir */}
+        <div className="w-full max-w-4xl mt-6 p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-emerald-500/30 text-right space-y-4 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <GraduationCap className="w-4 h-4" />
+                </span>
+                <h4 className="font-bold text-sm text-white font-quran">
+                  آيات الصفحة {currentPage} والتفسير التعليمي والتدبر
+                </h4>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-sans font-bold">
+                  انقر على أي آية لعرض تفسيرها
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-400">
+                اضغط على أي آية مباركة أدناه لفتح نافذة التفسير الميسر والوقفات التدبرية والعمل بالآية المستمدة من مصادر موثوقة.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowInteractiveVerses(!showInteractiveVerses)}
+              className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-300 text-xs font-semibold border border-stone-700 transition cursor-pointer self-start sm:self-auto"
+            >
+              {showInteractiveVerses ? 'طي القائمة' : 'عرض الآيات'}
+            </button>
+          </div>
+
+          {showInteractiveVerses && (
+            <div className="space-y-2.5">
+              {isLoadingPageVerses ? (
+                <div className="p-6 text-center text-xs text-stone-400 flex items-center justify-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-400 animate-spin" />
+                  <span>جارٍ تحضير آيات الصفحة للتفسير التعليمي...</span>
+                </div>
+              ) : pageVerses.length > 0 ? (
+                <div className="space-y-3">
+                  {/* Quick Ayah Jump Chips */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 no-scrollbar">
+                    <span className="text-[11px] text-stone-400 font-semibold whitespace-nowrap ml-1 flex items-center gap-1">
+                      <GraduationCap className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>انقر للتفسير:</span>
+                    </span>
+                    {pageVerses.map((v) => (
+                      <button
+                        key={v.verseKey}
+                        onClick={() => {
+                          setEducationalModalVerseKey(v.verseKey);
+                          setEducationalModalVerseText(v.text);
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-stone-950 hover:bg-emerald-950 text-stone-300 hover:text-emerald-300 border border-stone-800 hover:border-emerald-500/50 text-[11px] font-mono font-bold transition-all cursor-pointer whitespace-nowrap shadow-2xs"
+                        title={`تفسير الآية ${v.ayahNumber}`}
+                      >
+                        آية {v.ayahNumber}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    {pageVerses.map((ayah) => {
+                    const surahObj = ALL_SURAHS.find((s) => s.number === ayah.surahNumber) || currentSurah;
+                    return (
+                      <div
+                        key={ayah.verseKey}
+                        onClick={() => {
+                          setEducationalModalVerseKey(ayah.verseKey);
+                          setEducationalModalVerseText(ayah.text);
+                        }}
+                        className="group p-3 sm:p-4 rounded-2xl bg-stone-950/70 hover:bg-stone-850/90 border border-stone-800 hover:border-emerald-500/50 transition-all duration-200 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-right shadow-sm hover:shadow-emerald-950/40"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 text-[11px] text-stone-400">
+                            <span className="font-bold text-emerald-400 font-quran">سورة {surahObj.name}</span>
+                            <span>·</span>
+                            <span className="font-mono">آية {ayah.ayahNumber}</span>
+                          </div>
+                          <p className="font-quran text-base sm:text-lg text-amber-100/95 leading-relaxed group-hover:text-emerald-200 transition-colors">
+                            {ayah.text}
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-amber-400/30 text-amber-300 text-[10px] font-mono font-bold mx-1.5 align-middle bg-amber-950/30">
+                              {ayah.ayahNumber}
+                            </span>
+                          </p>
+                        </div>
+
+                        <div className="shrink-0 flex items-center gap-2 self-end sm:self-center">
+                          <span className="text-[11px] px-3 py-1.5 rounded-xl bg-emerald-950/80 group-hover:bg-emerald-600 text-emerald-300 group-hover:text-white border border-emerald-500/40 font-bold transition-all flex items-center gap-1.5 shadow-xs">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                            <span>التفسير والتدبر</span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 text-center text-xs text-stone-400">
+                  انقر على زر "تفسير الصفحة" أو "التفسير التعليمي والتدبر" بالأعلى للاطلاع على تفسير هذه الصفحة.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Tafsir Modal for Current Page */}
@@ -750,6 +896,21 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
             <TafsirSection initialPage={currentPage} />
           </div>
         </div>
+      )}
+
+      {/* Educational Tafsir Modal */}
+      {educationalModalVerseKey && (
+        <EducationalTafsirModal
+          isOpen={true}
+          onClose={() => setEducationalModalVerseKey(null)}
+          verseKey={educationalModalVerseKey}
+          initialVerseText={educationalModalVerseText}
+          onNavigateVerse={(newKey) => {
+            setEducationalModalVerseKey(newKey);
+            const found = pageVerses.find((v) => v.verseKey === newKey);
+            setEducationalModalVerseText(found?.text);
+          }}
+        />
       )}
     </div>
   );

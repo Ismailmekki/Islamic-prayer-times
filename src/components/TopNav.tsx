@@ -24,6 +24,7 @@ export const TopNav: React.FC<TopNavProps> = ({
     { id: 'prayers', label: 'مواقيت الصلاة' },
     { id: 'adhkar', label: 'أذكار الصباح والمساء' },
     { id: 'quran', label: 'القرآن والرقية' },
+    { id: 'radio', label: 'راديو القرآن الكريم' },
     { id: 'qibla', label: 'القبلة' },
     { id: 'tasbih', label: 'السبحة الإلكترونية' },
     { id: 'adhan', label: 'رفع الأذان' },

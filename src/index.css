@@ -6,7 +6,21 @@
     --font-quran: 'Amiri', 'Scheherazade New', serif;
   }
 
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
   body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+    overscroll-behavior-x: none;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
     font-family: var(--font-sans);
     background-color: #061211;
     color: #f5f7f6;
@@ -14,6 +28,15 @@
       radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.14) 0%, rgba(5, 150, 105, 0.04) 35%, transparent 70%),
       radial-gradient(circle at 85% 30%, rgba(217, 119, 6, 0.05) 0%, transparent 40%);
     background-attachment: fixed;
+  }
+
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+    position: relative;
+    min-height: 100vh;
   }
 }
 
