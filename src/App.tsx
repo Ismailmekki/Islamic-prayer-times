@@ -156,9 +156,19 @@ export default function App() {
   }, []);
 
   const handleTriggerAdhan = (prayerName = 'الصلاة', voice?: AdhanVoice) => {
-    if (voice) {
-      setSelectedVoice(voice);
+    let targetVoice = voice;
+    if (!targetVoice) {
+      if (prayerName.includes('الظهر')) {
+        targetVoice = ADHAN_VOICES.find((v) => v.id === 'dhuhr_adhan') || selectedVoice;
+      } else if (prayerName.includes('العصر')) {
+        targetVoice = ADHAN_VOICES.find((v) => v.id === 'asr_adhan') || selectedVoice;
+      } else if (prayerName.includes('الفجر')) {
+        targetVoice = ADHAN_VOICES.find((v) => v.id === 'fajr_alafasy') || selectedVoice;
+      } else {
+        targetVoice = selectedVoice;
+      }
     }
+    setSelectedVoice(targetVoice);
     setActiveAdhanPrayerName(prayerName);
     setIsAdhanModalOpen(true);
   };

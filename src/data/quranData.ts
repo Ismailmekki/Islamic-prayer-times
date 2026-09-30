@@ -7,44 +7,21 @@ export interface SurahMeta {
   revelationType: 'Meccan' | 'Medinan';
 }
 
-export interface QuranReciter {
-  id: string;
-  nameArabic: string;
-  baseUrl: string;
-  styleArabic: string;
-  category?: 'haramain' | 'classic' | 'reverent' | 'general';
-}
+import { ALL_QURAN_RECITERS, QuranReciter } from './allReciters';
 
-export const QURAN_RECITERS: QuranReciter[] = [
-  { id: 'alafasy', nameArabic: 'الشيخ مشاري راشد العفاسي', baseUrl: 'https://server8.mp3quran.net/afs', styleArabic: 'حفص عن عاصم (مرتل)', category: 'general' },
-  { id: 'abdulbasit_murattal', nameArabic: 'الشيخ عبد الباسط عبد الصمد', baseUrl: 'https://server7.mp3quran.net/basit', styleArabic: 'المصحف المرتل', category: 'classic' },
-  { id: 'minshawy_murattal', nameArabic: 'الشيخ محمد صديق المنشاوي', baseUrl: 'https://server10.mp3quran.net/minsh', styleArabic: 'المصحف المرتل خاشع', category: 'classic' },
-  { id: 'husary', nameArabic: 'الشيخ محمود خليل الحصري', baseUrl: 'https://server13.mp3quran.net/husr', styleArabic: 'رواية حفص بقواعد التجويد', category: 'classic' },
-  { id: 'muaiqly', nameArabic: 'الشيخ ماهر المعيقلي', baseUrl: 'https://server12.mp3quran.net/maher', styleArabic: 'إمام المسجد الحرام بمكة', category: 'haramain' },
-  { id: 'dosari', nameArabic: 'الشيخ ياسر الدوسري', baseUrl: 'https://server11.mp3quran.net/yasser', styleArabic: 'إمام المسجد الحرام (تلاوة نجدية)', category: 'haramain' },
-  { id: 'sds', nameArabic: 'الشيخ عبد الرحمن السديس', baseUrl: 'https://server11.mp3quran.net/sds', styleArabic: 'إمام وخطيب المسجد الحرام', category: 'haramain' },
-  { id: 'shur', nameArabic: 'الشيخ سعود الشريم', baseUrl: 'https://server7.mp3quran.net/shur', styleArabic: 'إمام المسجد الحرام سابقاً', category: 'haramain' },
-  { id: 'jhn', nameArabic: 'الشيخ عبد الله عواد الجهني', baseUrl: 'https://server13.mp3quran.net/jhn', styleArabic: 'إمام المسجد الحرام', category: 'haramain' },
-  { id: 'hthfi', nameArabic: 'الشيخ علي بن عبد الرحمن الحذيفي', baseUrl: 'https://server9.mp3quran.net/hthfi', styleArabic: 'إمام المسجد النبوي الشريف', category: 'haramain' },
-  { id: 'ghamadi', nameArabic: 'الشيخ سعد الغامدي', baseUrl: 'https://server7.mp3quran.net/s_gmd', styleArabic: 'صوت هادئ ومؤثر', category: 'reverent' },
-  { id: 'shatri', nameArabic: 'الشيخ أبو بكر الشاطري', baseUrl: 'https://server11.mp3quran.net/shatri', styleArabic: 'حدر متقن وخاشع', category: 'reverent' },
-  { id: 'ajm', nameArabic: 'الشيخ أحمد بن علي العجمي', baseUrl: 'https://server10.mp3quran.net/ajm', styleArabic: 'تلاوة مهيبة ومؤثرة', category: 'reverent' },
-  { id: 'qtm', nameArabic: 'الشيخ ناصر القطامي', baseUrl: 'https://server6.mp3quran.net/qtm', styleArabic: 'نبرة خاشعة ورقيقة', category: 'reverent' },
-  { id: 'frs_a', nameArabic: 'الشيخ فارس عباد', baseUrl: 'https://server8.mp3quran.net/frs_a', styleArabic: 'تلاوة يمنية شجية', category: 'reverent' },
-  { id: 'abkr', nameArabic: 'الشيخ إدريس أبكر', baseUrl: 'https://server6.mp3quran.net/abkr', styleArabic: 'صوت متبتل وباكٍ', category: 'reverent' },
-  { id: 'jleel', nameArabic: 'الشيخ خالد الجليل', baseUrl: 'https://server10.mp3quran.net/jleel', styleArabic: 'تلاوة خاشعة جداً', category: 'reverent' },
-  { id: 'lhdan', nameArabic: 'الشيخ محمد اللحيدان', baseUrl: 'https://server8.mp3quran.net/lhdan', styleArabic: 'تلاوة مؤثرة فريدة', category: 'reverent' },
-  { id: 'a_jbr', nameArabic: 'الشيخ علي عبد الله جابر (رحمه الله)', baseUrl: 'https://server11.mp3quran.net/a_jbr', styleArabic: 'إمام الحرم المكي الأسبق', category: 'haramain' },
-  { id: 'mustafa', nameArabic: 'الشيخ مصطفى إسماعيل', baseUrl: 'https://server8.mp3quran.net/mustafa', styleArabic: 'عملاق التلاوة المصرية', category: 'classic' },
-  { id: 'bna', nameArabic: 'الشيخ محمود علي البنا', baseUrl: 'https://server8.mp3quran.net/bna', styleArabic: 'المصحف المرتل المتقن', category: 'classic' },
-  { id: 'jbrl', nameArabic: 'الشيخ محمد جبريل', baseUrl: 'https://server8.mp3quran.net/jbrl', styleArabic: 'تلاوة تراويح مشهورة', category: 'general' },
-  { id: 'hazza', nameArabic: 'الشيخ هزاع البلوشي', baseUrl: 'https://server11.mp3quran.net/hazza', styleArabic: 'صوت هادئ ومريح للقلب', category: 'reverent' },
-  { id: 'bu_khtr', nameArabic: 'الشيخ صلاح بو خاطر', baseUrl: 'https://server8.mp3quran.net/bu_khtr', styleArabic: 'تلاوة إماراتية عذبة', category: 'general' },
-];
+export type { QuranReciter };
+export const QURAN_RECITERS: QuranReciter[] = ALL_QURAN_RECITERS;
 
 export function getSurahAudioUrl(surahNumber: number, reciter: QuranReciter): string {
   const padded = surahNumber.toString().padStart(3, '0');
-  return `${reciter.baseUrl}/${padded}.mp3`;
+  let base = (reciter.baseUrl || 'https://server8.mp3quran.net/afs').trim().replace(/\/+$/, '');
+  
+  // If base already ends with a 3-digit mp3 filename, remove it to get directory
+  if (/\/\d{3}\.mp3$/i.test(base)) {
+    base = base.replace(/\/\d{3}\.mp3$/i, '');
+  }
+  
+  return `${base}/${padded}.mp3`;
 }
 
 /**

@@ -172,8 +172,10 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isFajr = prayerName.includes('الفجر');
+  const availablePhrases = ADHAN_WORDS.filter((w) => !w.fajrOnly || isFajr);
+  const currentPhrase = availablePhrases[activeWordIndex % availablePhrases.length] || availablePhrases[0];
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const currentPhrase = ADHAN_WORDS[activeWordIndex];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-300">
@@ -184,7 +186,7 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
             handleStop();
             onClose();
           }}
-          className="absolute top-5 left-5 p-2 rounded-full bg-stone-800/80 text-stone-400 hover:text-white hover:bg-stone-700 transition-colors z-20"
+          className="absolute top-5 left-5 p-2 rounded-full bg-stone-800/80 text-stone-400 hover:text-white hover:bg-stone-700 transition-colors z-20 cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -193,25 +195,56 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
         <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-emerald-500/15 to-transparent pointer-events-none" />
 
         {/* Header Label */}
-        <div className="flex items-center gap-2 text-emerald-400 text-xs sm:text-sm font-semibold mb-2">
+        <div className="flex items-center gap-2 text-emerald-400 text-xs sm:text-sm font-semibold mb-2 flex-wrap justify-center">
           <Moon className="w-4 h-4" />
           <span>حَانَ الآن موعد رفع الأذان · {prayerName}</span>
+          <span className="text-[10px] bg-emerald-950/80 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/40 font-mono">
+            HQ 128kbps نقي
+          </span>
         </div>
 
         <h2 className="text-2xl sm:text-3xl font-bold text-white mb-1 font-quran">
           {selectedVoice.titleArabic}
         </h2>
-        <p className="text-xs sm:text-sm text-stone-400 mb-6">
+        <p className="text-xs sm:text-sm text-stone-400 mb-3">
           {selectedVoice.reciterArabic} · {selectedVoice.locationArabic}
         </p>
 
+        {/* Quick Voice Switcher Pills in Modal */}
+        <div className="w-full mb-4 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+          {ADHAN_VOICES.map((voice) => {
+            const isCurr = selectedVoice.id === voice.id;
+            return (
+              <button
+                key={voice.id}
+                onClick={() => {
+                  onSelectVoice(voice);
+                  startAdhanPlayback(voice);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer border shrink-0 flex items-center gap-1.5 ${
+                  isCurr
+                    ? 'bg-emerald-600 text-white border-emerald-400 shadow-md font-bold'
+                    : 'bg-stone-950/70 text-stone-300 hover:text-white border-stone-800 hover:bg-stone-800'
+                }`}
+              >
+                {isCurr && <Volume2 className="w-3 h-3 text-amber-300 animate-pulse" />}
+                <span>{voice.titleArabic.replace('أذان ', '')}</span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Central Calligraphy Display Card */}
-        <div className="w-full py-8 px-6 my-2 rounded-2xl bg-stone-950/70 border border-emerald-500/20 shadow-inner flex flex-col items-center justify-center min-h-[140px] relative overflow-hidden">
+        <div className="w-full py-7 px-6 my-2 rounded-2xl bg-stone-950/70 border border-emerald-500/20 shadow-inner flex flex-col items-center justify-center min-h-[140px] relative overflow-hidden">
           <span className="text-2xl sm:text-4xl font-bold text-emerald-300 font-quran leading-relaxed animate-pulse">
             {currentPhrase.text}
           </span>
           <span className="text-xs text-stone-500 mt-3 font-sans">
-            «أشهد أن لا إله إلا الله، وأشهد أن محمداً رسول الله»
+            {prayerName.includes('الظهر')
+              ? '«رُفع الآن أذان صلاة الظهر المبارك - حَيَّ عَلَى الصَّلَاةِ، حَيَّ عَلَى الْفَلَاحِ»'
+              : prayerName.includes('العصر')
+              ? '«رُفع الآن أذان صلاة العصر المبارك - حَافِظُوا عَلَى الصَّلَوَاتِ وَالصَّلَاةِ الْوُسْطَى»'
+              : '«أشهد أن لا إله إلا الله، وأشهد أن محمداً رسول الله»'}
           </span>
 
           {/* Sound waves visualization simulation */}
@@ -249,10 +282,10 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
         </div>
 
         {/* Controls */}
-        <div className="flex items-center justify-center gap-4 my-6">
+        <div className="flex items-center justify-center gap-4 my-6 flex-wrap">
           <button
             onClick={handleTogglePlay}
-            className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 transition-transform active:scale-95"
+            className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 transition-transform active:scale-95 cursor-pointer"
             title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
           >
             {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current mr-0.5" />}
@@ -260,17 +293,17 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
 
           <button
             onClick={handleStop}
-            className="w-11 h-11 rounded-full bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors"
+            className="w-11 h-11 rounded-full bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition-colors cursor-pointer"
             title="إيقاف كامل"
           >
             <Square className="w-4 h-4 fill-current" />
           </button>
 
-          <div className="flex items-center gap-2 mr-3 bg-stone-950/60 px-3 py-2 rounded-xl border border-stone-800">
+          <div className="flex items-center gap-2 bg-stone-950/80 px-3.5 py-2 rounded-xl border border-stone-800">
             {isMuted || volume === 0 ? (
-              <VolumeX className="w-4 h-4 text-stone-500" />
+              <VolumeX className="w-4 h-4 text-stone-500 cursor-pointer" onClick={() => handleVolumeChange({ target: { value: '0.8' } } as unknown as React.ChangeEvent<HTMLInputElement>)} />
             ) : (
-              <Volume2 className="w-4 h-4 text-emerald-400" />
+              <Volume2 className="w-4 h-4 text-emerald-400 cursor-pointer" onClick={() => handleVolumeChange({ target: { value: '0' } } as unknown as React.ChangeEvent<HTMLInputElement>)} />
             )}
             <input
               type="range"
@@ -279,8 +312,12 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
               step="0.05"
               value={volume}
               onChange={handleVolumeChange}
-              className="w-20 accent-emerald-500 h-1.5 cursor-pointer"
+              className="w-24 accent-emerald-500 h-1.5 cursor-pointer"
+              title="مستوى الصوت"
             />
+            <span className="text-[10px] font-mono text-emerald-300 min-w-[28px]">
+              {Math.round(volume * 100)}%
+            </span>
           </div>
         </div>
 

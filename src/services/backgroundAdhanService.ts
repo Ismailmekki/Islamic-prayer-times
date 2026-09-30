@@ -5,6 +5,7 @@
  */
 
 import { PrayerTimeItem, AdhanVoice } from '../types/prayer';
+import { ADHAN_VOICES } from '../data/adhanSounds';
 import { soundService } from '../utils/soundService';
 
 export interface PrayerReminderRule {
@@ -494,14 +495,27 @@ class BackgroundAdhanService {
     // 2. Configure system media lock-screen session
     this.setupMediaSession(prayerName);
 
-    // 3. Play full Adhan audio if audio enabled
-    if (this.config.notifyWithFullAudio) {
-      soundService.playAdhan(voice.audioUrl);
+    // 3. Resolve dedicated adhan voice for Dhuhr, Asr, or Fajr if appropriate
+    let effectiveVoice = voice;
+    if (prayerName.includes('الظهر')) {
+      const dhuhrV = ADHAN_VOICES.find((v) => v.id === 'dhuhr_adhan');
+      if (dhuhrV) effectiveVoice = dhuhrV;
+    } else if (prayerName.includes('العصر')) {
+      const asrV = ADHAN_VOICES.find((v) => v.id === 'asr_adhan');
+      if (asrV) effectiveVoice = asrV;
+    } else if (prayerName.includes('الفجر')) {
+      const fajrV = ADHAN_VOICES.find((v) => v.id === 'fajr_alafasy');
+      if (fajrV) effectiveVoice = fajrV;
     }
 
-    // 4. Trigger UI callback
+    // 4. Play full Adhan audio if audio enabled
+    if (this.config.notifyWithFullAudio) {
+      soundService.playAdhan(effectiveVoice.audioUrl);
+    }
+
+    // 5. Trigger UI callback
     if (this.onAdhanTriggerCallback) {
-      this.onAdhanTriggerCallback(prayerName, voice);
+      this.onAdhanTriggerCallback(prayerName, effectiveVoice);
     }
   }
 }

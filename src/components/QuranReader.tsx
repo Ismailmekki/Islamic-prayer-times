@@ -49,6 +49,7 @@ import { QuranMemorizer } from './QuranMemorizer';
 import { KhatmahManager } from './KhatmahManager';
 import { EducationalTafsirModal } from './EducationalTafsirModal';
 import { QuranRadio } from './QuranRadio';
+import { RecitersBrowserModal } from './RecitersBrowserModal';
 import { tafsirService } from '../services/tafsirService';
 
 export type ReadingTheme = 'light' | 'dark' | 'sepia';
@@ -57,6 +58,10 @@ export type QuranReaderMode = 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'qu
 export const QuranReader: React.FC = () => {
   // Mode: 'mushaf' | 'tafsir' | 'memorize' | 'khatmah' | 'quran' | 'roqyah'
   const [activeMode, setActiveMode] = useState<QuranReaderMode>('mushaf');
+
+  // Reciters Browser Modal State
+  const [isRecitersModalOpen, setIsRecitersModalOpen] = useState<boolean>(false);
+
 
   // Background Theme: Day (light) vs Night (dark) vs Sepia
   const [readingTheme, setReadingTheme] = useState<ReadingTheme>(() => {
@@ -686,8 +691,12 @@ export const QuranReader: React.FC = () => {
               }`}
             >
               <Radio className="w-3.5 h-3.5" />
-              <span>تلاوات السور</span>
+              <span>تلاوات السور والقراء</span>
+              <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded-md font-bold border border-emerald-500/40 font-mono">
+                {QURAN_RECITERS.length}+ قارئ
+              </span>
             </button>
+
 
             <button
               onClick={() => setActiveMode('roqyah')}
@@ -828,13 +837,13 @@ export const QuranReader: React.FC = () => {
       {/* Reciter Selector Section for Quran mode */}
       {activeMode === 'quran' && (
         <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-stone-800 space-y-3.5 text-right">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800/80 pb-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-stone-800/80 pb-3.5">
             <div className="space-y-1">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                 <Sparkles className="w-4 h-4 text-emerald-400" />
                 <span>اختر المقرئ المفضل للاستماع:</span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-sans">
-                  {QURAN_RECITERS.length} مقرئ متاح
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-sans font-bold">
+                  {QURAN_RECITERS.length} قارئ معتمد
                 </span>
               </h4>
               <p className="text-[11px] text-stone-400">
@@ -844,8 +853,15 @@ export const QuranReader: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto">
-              <span className="text-xs font-bold text-stone-300 whitespace-nowrap">المقرئ:</span>
+            <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+              <button
+                onClick={() => setIsRecitersModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-950/80 transition-all active:scale-95"
+              >
+                <Users className="w-4 h-4 text-amber-300" />
+                <span>تصفح وابحث في جميع القراء ({QURAN_RECITERS.length} قارئ)</span>
+              </button>
+
               <div className="relative">
                 <select
                   value={selectedReciter.id}
@@ -853,16 +869,19 @@ export const QuranReader: React.FC = () => {
                     const found = QURAN_RECITERS.find((r) => r.id === e.target.value);
                     if (found) {
                       setSelectedReciter(found);
+                      try {
+                        localStorage.setItem('salati_selected_reciter_id', found.id);
+                      } catch {}
                       if (isPlaying) {
                         playTrack(getSurahAudioUrl(currentSurah.number, found));
                       }
                     }
                   }}
-                  className="bg-stone-950 border border-stone-700 hover:border-emerald-500 text-stone-200 text-xs rounded-xl px-3 py-2 pr-8 appearance-none cursor-pointer focus:outline-none focus:border-emerald-500 transition-colors w-60 sm:w-72"
+                  className="bg-stone-950 border border-stone-700 hover:border-emerald-500 text-stone-200 text-xs rounded-xl px-3 py-2 pr-8 appearance-none cursor-pointer focus:outline-none focus:border-emerald-500 transition-colors w-44 sm:w-56 truncate"
                 >
                   {QURAN_RECITERS.map((r) => (
                     <option key={r.id} value={r.id} className="bg-stone-900 text-white">
-                      {r.nameArabic} - {r.styleArabic}
+                      {r.nameArabic} ({r.styleArabic})
                     </option>
                   ))}
                 </select>
@@ -872,16 +891,20 @@ export const QuranReader: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-            <span className="text-[11px] text-stone-400 whitespace-nowrap ml-1 font-semibold">
-              شائع:
+            <span className="text-[11px] text-stone-400 whitespace-nowrap ml-1 font-semibold flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>أشهر القراء:</span>
             </span>
-            {QURAN_RECITERS.slice(0, 8).map((r) => {
+            {QURAN_RECITERS.slice(0, 16).map((r) => {
               const isSelected = selectedReciter.id === r.id;
               return (
                 <button
                   key={r.id}
                   onClick={() => {
                     setSelectedReciter(r);
+                    try {
+                      localStorage.setItem('salati_selected_reciter_id', r.id);
+                    } catch {}
                     if (isPlaying) {
                       playTrack(getSurahAudioUrl(currentSurah.number, r));
                     }
@@ -896,6 +919,12 @@ export const QuranReader: React.FC = () => {
                 </button>
               );
             })}
+            <button
+              onClick={() => setIsRecitersModalOpen(true)}
+              className="px-2.5 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 transition-colors cursor-pointer"
+            >
+              + المزيد ({QURAN_RECITERS.length - 16})
+            </button>
           </div>
         </div>
       )}
@@ -1015,6 +1044,19 @@ export const QuranReader: React.FC = () => {
 
           {/* Action buttons & Sound waves visualizer */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5 sm:self-center">
+            {activeMode === 'quran' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setIsRecitersModalOpen(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+                  title="تصفح جميع القراء بالأحرف الهجائية وفهرس surahquran.com"
+                >
+                  <Users className="w-3.5 h-3.5 text-amber-300" />
+                  <span>تغيير القارئ ({QURAN_RECITERS.length}+ قارئ)</span>
+                </button>
+              </div>
+            )}
+
             {activeMode === 'roqyah' && (
               <div className="flex items-center gap-2 flex-wrap">
                 <button
@@ -1776,6 +1818,24 @@ export const QuranReader: React.FC = () => {
           }}
         />
       )}
+
+      {/* Reciters Browser Modal (Comprehensive library 360+ reciters by letter & surahquran.com) */}
+      <RecitersBrowserModal
+        isOpen={isRecitersModalOpen}
+        onClose={() => setIsRecitersModalOpen(false)}
+        selectedReciter={selectedReciter}
+        onSelectReciter={(reciter) => {
+          setSelectedReciter(reciter);
+          try {
+            localStorage.setItem('salati_selected_reciter_id', reciter.id);
+          } catch {}
+          if (activeMode !== 'quran') {
+            setActiveMode('quran');
+          }
+          playTrack(getSurahAudioUrl(currentSurah.number, reciter));
+        }}
+        currentSurah={currentSurah}
+      />
     </div>
   );
 };

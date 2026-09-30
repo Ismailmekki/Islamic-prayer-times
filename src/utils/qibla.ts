@@ -197,3 +197,57 @@ export function calculateSunPosition(
     relationToQibla,
   };
 }
+
+/**
+ * Calculates the exact local time when the Sun is directly aligned with the Qibla
+ * or when the Sun's shadow aligns with the Qibla for the given day.
+ */
+export function getQiblaSolarAlignmentTime(
+  latitude: number,
+  longitude: number,
+  date: Date = new Date()
+): { directTime: string | null; shadowTime: string | null } {
+  const qibla = calculateQiblaBearing(latitude, longitude);
+  const shadowQibla = (qibla + 180) % 360;
+
+  let bestDirectDiff = 999;
+  let bestDirectTime: string | null = null;
+
+  let bestShadowDiff = 999;
+  let bestShadowTime: string | null = null;
+
+  // Scan minutes from 05:00 to 20:00 local time
+  const y = date.getFullYear();
+  const m = date.getMonth();
+  const d = date.getDate();
+
+  for (let min = 5 * 60; min <= 20 * 60; min += 2) {
+    const testDate = new Date(y, m, d, Math.floor(min / 60), min % 60, 0);
+    const sun = calculateSunPosition(latitude, longitude, testDate);
+
+    if (sun.isVisible) {
+      const directDiff = Math.abs(((sun.azimuth - qibla + 540) % 360) - 180);
+      if (directDiff < bestDirectDiff) {
+        bestDirectDiff = directDiff;
+        if (directDiff <= 2.5) {
+          const hh = String(Math.floor(min / 60)).padStart(2, '0');
+          const mm = String(min % 60).padStart(2, '0');
+          bestDirectTime = `${hh}:${mm}`;
+        }
+      }
+
+      const shadowDiff = Math.abs(((sun.azimuth - shadowQibla + 540) % 360) - 180);
+      if (shadowDiff < bestShadowDiff) {
+        bestShadowDiff = shadowDiff;
+        if (shadowDiff <= 2.5) {
+          const hh = String(Math.floor(min / 60)).padStart(2, '0');
+          const mm = String(min % 60).padStart(2, '0');
+          bestShadowTime = `${hh}:${mm}`;
+        }
+      }
+    }
+  }
+
+  return { directTime: bestDirectTime, shadowTime: bestShadowTime };
+}
+

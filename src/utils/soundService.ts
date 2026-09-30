@@ -74,7 +74,7 @@ class SoundService {
   }
 
   /**
-   * Plays Adhan audio track
+   * Plays Adhan audio track with crystal clear sound
    */
   public playAdhan(
     url: string,
@@ -85,8 +85,8 @@ class SoundService {
     this.stopAdhan();
 
     const audio = new Audio(url);
-    audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
+    audio.volume = 1.0;
 
     audio.ontimeupdate = () => {
       if (onTimeUpdate) {
@@ -99,13 +99,26 @@ class SoundService {
     };
 
     audio.onerror = (e) => {
-      // Fallback: If external MP3 fails to load, play synthesized calm Adhan melody
+      console.warn('Adhan audio failed to load from:', url, e);
+      // Fallback: If specific audio fails, fallback to local makkah adhan or synthetic melody
+      if (!url.includes('/audio/adhan/makkah.mp3')) {
+        const fallbackAudio = new Audio('/audio/adhan/makkah.mp3');
+        fallbackAudio.preload = 'auto';
+        fallbackAudio.volume = 1.0;
+        fallbackAudio.ontimeupdate = audio.ontimeupdate;
+        fallbackAudio.onended = audio.onended;
+        fallbackAudio.play().catch(() => {
+          this.playSyntheticAdhanMelody();
+        });
+        this.adhanAudio = fallbackAudio;
+        return;
+      }
       this.playSyntheticAdhanMelody();
       if (onError) onError(e);
     };
 
     audio.play().catch((err) => {
-      // Auto-play might be blocked without gesture
+      console.warn('Adhan auto-play prevented by browser:', err);
       if (onError) onError(err);
     });
 
