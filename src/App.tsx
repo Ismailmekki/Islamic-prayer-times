@@ -23,34 +23,74 @@ import { ADHAN_VOICES } from './data/adhanSounds';
 import { calculateDailyPrayerTimes, getPrayerList } from './utils/prayerTimes';
 import { COUNTRIES_AND_STATES } from './data/countriesAndStates';
 import { backgroundAdhanService } from './services/backgroundAdhanService';
+import { soundService } from './utils/soundService';
 import { Clock, Volume2, Compass, MapPin, BookOpen, Sparkles, Heart, CircleDot, Radio } from 'lucide-react';
 
-export default function App() {
-  // Navigation tab state
-  const [currentTab, setCurrentTab] = useState<string>('prayers');
-
-  // Location state: Default to Makkah Al-Mukarramah or previous stored
-  const [location, setLocation] = useState<UserLocation>(() => {
+function getInitialLocationAndMethod(): { location: UserLocation; method: CalculationMethodId } {
+  if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('noor_user_location');
+    const savedMethod = localStorage.getItem('noor_calc_method') as CalculationMethodId | null;
     if (saved) {
       try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
-      }
+        const parsed = JSON.parse(saved);
+        return {
+          location: parsed,
+          method: savedMethod || 'MAKKAH',
+        };
+      } catch {}
     }
-    return {
+
+    // Auto-detect based on user's device local timezone
+    try {
+      const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (userTz) {
+        const matchedCountry = COUNTRIES_AND_STATES.find((c) => {
+          if (c.timezone === userTz) return true;
+          const tzCity = userTz.split('/')[1]?.toLowerCase();
+          const countryTzCity = c.timezone.split('/')[1]?.toLowerCase();
+          return tzCity && countryTzCity && tzCity === countryTzCity;
+        });
+
+        if (matchedCountry) {
+          const capital = matchedCountry.states.find((s) => s.isCapital) || matchedCountry.states[0];
+          return {
+            location: {
+              cityName: capital.nameArabic,
+              countryName: matchedCountry.countryNameArabic,
+              latitude: capital.latitude,
+              longitude: capital.longitude,
+              timezone: userTz,
+              isAutoGPS: false,
+            },
+            method: matchedCountry.defaultMethod,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    location: {
       cityName: 'مكة المكرمة',
       countryName: 'المملكة العربية السعودية',
       latitude: 21.4225,
       longitude: 39.8262,
       timezone: 'Asia/Riyadh',
       isAutoGPS: false,
-    };
-  });
+    },
+    method: 'MAKKAH',
+  };
+}
+
+export default function App() {
+  // Navigation tab state
+  const [currentTab, setCurrentTab] = useState<string>('prayers');
+
+  // Location state: Resolved dynamically from device timezone or stored
+  const [location, setLocation] = useState<UserLocation>(() => getInitialLocationAndMethod().location);
 
   // Prayer Calculation Method & Juristic Method
-  const [calculationMethod, setCalculationMethod] = useState<CalculationMethodId>('MAKKAH');
+  const [calculationMethod, setCalculationMethod] = useState<CalculationMethodId>(() => getInitialLocationAndMethod().method);
   const [juristicMethod, setJuristicMethod] = useState<JuristicMethod>('standard');
 
   // Adhan state
@@ -93,10 +133,24 @@ export default function App() {
     };
   }, [location, calculationMethod, juristicMethod, selectedVoice]);
 
+  // Unlock audio session on first user gesture to ensure background Adhan triggers reliably
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      if (backgroundAdhanService.getConfig().keepActiveInBackground) {
+        soundService.unlockAudioSession().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', handleFirstGesture, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstGesture);
+    };
+  }, []);
+
   // Save location updates to localStorage
   useEffect(() => {
     localStorage.setItem('noor_user_location', JSON.stringify(location));
-  }, [location]);
+    localStorage.setItem('noor_calc_method', calculationMethod);
+  }, [location, calculationMethod]);
 
   // Attempt silent GPS geolocation once on startup if not yet set
   useEffect(() => {

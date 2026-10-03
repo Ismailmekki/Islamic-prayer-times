@@ -323,7 +323,7 @@ export function calculateDailyPrayerTimes(
   const angleAsr = radToDeg(
     Math.atan(1.0 / (shadowMultiplier + Math.tan(Math.abs(latRad - decRad))))
   );
-  const asrRes = timeForSunAngle(90 - angleAsr, false);
+  const asrRes = timeForSunAngle(-angleAsr, false);
   const asrHour = asrRes.isExtreme ? dhuhrHour + 3.0 : asrRes.hour;
 
   // 3. Maghrib (sunset + 2 min precaution)

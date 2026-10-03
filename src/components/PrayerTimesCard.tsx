@@ -14,6 +14,10 @@ import {
   Bell,
   CheckCircle2,
   Compass,
+  Play,
+  ShieldCheck,
+  AlertCircle,
+  Radio,
 } from 'lucide-react';
 import {
   CalculationMethodId,
@@ -33,6 +37,11 @@ import {
   getPrayerList,
 } from '../utils/prayerTimes';
 import { BackgroundAdhanCard } from './BackgroundAdhanCard';
+import {
+  backgroundAdhanService,
+  NotificationStateInfo,
+} from '../services/backgroundAdhanService';
+import { soundService } from '../utils/soundService';
 
 interface PrayerTimesCardProps {
   location: UserLocation;
@@ -51,17 +60,79 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
 }) => {
   const [now, setNow] = useState<Date>(new Date());
   const [showMonthlyModal, setShowMonthlyModal] = useState(false);
-  const [mutedPrayers, setMutedPrayers] = useState<Record<PrayerName, boolean>>({
-    fajr: false,
-    sunrise: true,
-    duha: false,
-    dhuhr: false,
-    jumuah: false,
-    asr: false,
-    maghrib: false,
-    isha: false,
-    qiyam: true,
+  const [notifState, setNotifState] = useState<NotificationStateInfo>(() =>
+    backgroundAdhanService.getNotificationState()
+  );
+  const [isActivatingAdhan, setIsActivatingAdhan] = useState(false);
+  const [testAudioPlaying, setTestAudioPlaying] = useState(false);
+
+  const [mutedPrayers, setMutedPrayers] = useState<Record<PrayerName, boolean>>(() => {
+    const config = backgroundAdhanService.getConfig();
+    const r = config.prayerReminders;
+    return {
+      fajr: !r.fajr.enabled,
+      sunrise: !r.sunrise.enabled,
+      duha: !r.duha.enabled,
+      dhuhr: !r.dhuhr.enabled,
+      jumuah: !r.jumuah.enabled,
+      asr: !r.asr.enabled,
+      maghrib: !r.maghrib.enabled,
+      isha: !r.isha.enabled,
+      qiyam: !r.qiyam.enabled,
+    };
   });
+
+  const refreshNotificationState = () => {
+    setNotifState(backgroundAdhanService.getNotificationState());
+  };
+
+  useEffect(() => {
+    refreshNotificationState();
+    window.addEventListener('focus', refreshNotificationState);
+    document.addEventListener('visibilitychange', refreshNotificationState);
+    return () => {
+      window.removeEventListener('focus', refreshNotificationState);
+      document.removeEventListener('visibilitychange', refreshNotificationState);
+    };
+  }, []);
+
+  const handleEnableAdhan = async () => {
+    setIsActivatingAdhan(true);
+    try {
+      // 1. Prime master audio session immediately during this user click
+      await soundService.unlockAudioSession();
+
+      // 2. Request browser system notification permission
+      const perm = await backgroundAdhanService.requestNotificationPermission();
+
+      // 3. Play immediate audible confirmation Takbeer ("الله أكبر")
+      soundService.playTakbeerConfirmation();
+
+      // 4. Update configuration to enabled
+      backgroundAdhanService.updateConfig({
+        enabled: true,
+        notifyWithFullAudio: true,
+        keepActiveInBackground: true,
+      });
+
+      // 5. Send test notification to lock screen
+      if (perm === 'granted') {
+        await backgroundAdhanService.sendTestNotification(location.cityName);
+      }
+
+      refreshNotificationState();
+    } finally {
+      setIsActivatingAdhan(false);
+    }
+  };
+
+  const handleTestAdhanSound = () => {
+    setTestAudioPlaying(true);
+    soundService.unlockAudioSession().catch(() => {});
+    soundService.playAdhan(selectedVoice.audioUrl);
+    onPlayAdhanForPrayer(countdown.targetPrayer.nameArabic);
+    setTimeout(() => setTestAudioPlaying(false), 4000);
+  };
 
   // Keep live time tick every second
   useEffect(() => {
@@ -129,10 +200,19 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
   }
 
   const toggleMute = (id: PrayerName) => {
+    const isCurrentlyMuted = !!mutedPrayers[id];
+    const newMuted = !isCurrentlyMuted;
     setMutedPrayers((prev) => ({
       ...prev,
-      [id]: !prev[id],
+      [id]: newMuted,
     }));
+    backgroundAdhanService.updatePrayerReminder(id as any, {
+      enabled: !newMuted,
+    });
+    if (!newMuted) {
+      soundService.unlockAudioSession().catch(() => {});
+      soundService.playTasbeehClick();
+    }
   };
 
   const getPrayerIcon = (id: PrayerName) => {
@@ -183,9 +263,14 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
                   <Moon className="w-3 h-3 text-amber-400" />
                   <span>التقويم الهجري (تقويم أم القرى المبارك)</span>
                 </span>
-                <span className="text-xs text-emerald-200/80">
-                  · {location.cityName}
-                </span>
+                <button
+                  onClick={onOpenSettings}
+                  className="text-xs text-emerald-300 hover:text-white bg-emerald-950/70 hover:bg-emerald-900/90 px-2.5 py-0.5 rounded-lg border border-emerald-500/40 flex items-center gap-1.5 cursor-pointer transition-colors"
+                  title="تغيير المدينة وضبط التوقيت المحلي"
+                >
+                  <span>📍 {location.cityName} ({location.countryName})</span>
+                  <span className="text-[10px] text-amber-300 font-bold underline">تغيير</span>
+                </button>
               </div>
 
               {/* Big Hijri Date Headline */}
@@ -203,7 +288,7 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
           </div>
 
           {/* Quick Action buttons */}
-          <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+          <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
             <button
               onClick={() => setShowMonthlyModal(true)}
               className="px-3.5 py-2 rounded-xl bg-[#09221f] hover:bg-[#0d2f2b] text-emerald-200 text-xs font-semibold border border-emerald-500/30 hover:border-emerald-400/60 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
@@ -213,10 +298,84 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
             </button>
             <button
               onClick={onOpenSettings}
-              className="p-2 rounded-xl bg-[#09221f] hover:bg-[#0d2f2b] text-stone-300 hover:text-white border border-emerald-500/30 hover:border-emerald-400/60 transition-all shadow-xs cursor-pointer"
-              title="إعدادات الحساب والموقع"
+              className="px-3 py-2 rounded-xl bg-[#09221f] hover:bg-[#0d2f2b] text-stone-200 hover:text-white border border-emerald-500/30 hover:border-emerald-400/60 transition-all flex items-center gap-1.5 text-xs font-semibold shadow-xs cursor-pointer"
+              title="تحديد المدينة وطريقة الحساب"
             >
               <Settings className="w-4 h-4 text-emerald-400" />
+              <span>تغيير المدينة ({location.cityName})</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Adhan & Notification Activation / Synchronization Banner */}
+      <div
+        className={`p-4 sm:p-5 rounded-3xl border transition-all shadow-xl ${
+          notifState.permission === 'granted'
+            ? 'bg-gradient-to-r from-emerald-950/80 via-[#071917] to-stone-950 border-emerald-500/40 shadow-emerald-950/30'
+            : 'bg-gradient-to-r from-amber-950/90 via-[#181106] to-stone-950 border-amber-500/50 shadow-amber-950/40'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3 text-right">
+            <div
+              className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
+                notifState.permission === 'granted'
+                  ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-400/50 animate-pulse'
+              }`}
+            >
+              {notifState.permission === 'granted' ? (
+                <ShieldCheck className="w-6 h-6" />
+              ) : (
+                <Volume2 className="w-6 h-6" />
+              )}
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="font-bold text-sm sm:text-base text-white">
+                  {notifState.permission === 'granted'
+                    ? `✓ الأذان التلقائي وتنبيهات الصلوات مفعّلة لمدينة ${location.cityName}`
+                    : '🔔 تنبيه: رفع الأذان تلقائياً وإشعارات الصلوات بحاجة لتفعيل'}
+                </h4>
+                {notifState.permission === 'granted' ? (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-500/40 font-bold">
+                    نشط بالتوقيت المحلي
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full border border-amber-500/40 font-bold">
+                    مطلوب تفعيل الصوت والإذن
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
+                {notifState.permission === 'granted'
+                  ? `يصدح الأذان تلقائياً بصوت ندي في موعد كل صلاة حسب توقيت مدينة ${location.cityName} حتى لو كان الهاتف مقفلاً أو في الخلفية.`
+                  : 'ليصدح صوت الأذان في موعد كل صلاة بدقة وتصلك تنبيهات شاشة القفل حسب توقيت مدينتك، اضغط على زر التفعيل أدناه.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0 flex-wrap">
+            {notifState.permission !== 'granted' ? (
+              <button
+                onClick={handleEnableAdhan}
+                disabled={isActivatingAdhan}
+                className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-stone-950 font-black text-xs sm:text-sm shadow-lg shadow-emerald-500/30 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <Bell className="w-4 h-4" />
+                <span>{isActivatingAdhan ? 'جاري التفعيل...' : 'تفعيل الأذان والتنبيهات الآن'}</span>
+              </button>
+            ) : null}
+
+            <button
+              onClick={handleTestAdhanSound}
+              disabled={testAudioPlaying}
+              className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="سماع تجربة الأذان فوراً للتأكد من الصوت"
+            >
+              <Play className="w-3.5 h-3.5 text-amber-400" />
+              <span>{testAudioPlaying ? 'جاري رفع الأذان...' : 'تجربة صوت الأذان (فوري)'}</span>
             </button>
           </div>
         </div>
@@ -294,6 +453,7 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
         nextPrayer={countdown.targetPrayer}
         selectedVoice={selectedVoice}
         onTestTrigger={() => onPlayAdhanForPrayer(countdown.targetPrayer.nameArabic)}
+        prayerList={prayerList}
       />
 
       {/* Prayer Grid (The 5 daily prayers + Sunrise) */}

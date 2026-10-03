@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Volume2, Play, Pause, Sparkles, Radio, Check, Moon, MapPin, Award, Sun, CloudSun } from 'lucide-react';
+import { Volume2, Play, Pause, Sparkles, Radio, Check, Moon, MapPin, Award, Sun, CloudSun, ShieldCheck, Lock, Bell, Send } from 'lucide-react';
 import { ADHAN_VOICES, DUA_AFTER_ADHAN } from '../data/adhanSounds';
 import { AdhanVoice } from '../types/prayer';
 import { soundService } from '../utils/soundService';
+import { backgroundAdhanService } from '../services/backgroundAdhanService';
 
 interface AdhanSectionProps {
   currentVoice: AdhanVoice;
@@ -17,6 +18,30 @@ export const AdhanSection: React.FC<AdhanSectionProps> = ({
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'day' | 'haramein' | 'reciters' | 'fajr'>('all');
   const [isDuaPlaying, setIsDuaPlaying] = useState(false);
+  const [bgConfig, setBgConfig] = useState(() => backgroundAdhanService.getConfig());
+  const [lockScreenCountdown, setLockScreenCountdown] = useState<number | null>(null);
+
+  const handleStart5sTest = () => {
+    soundService.unlockAudioSession().catch(() => {});
+    setLockScreenCountdown(5);
+    backgroundAdhanService.scheduleLockScreenTest(
+      'موقعي الحالي',
+      currentVoice,
+      (secondsLeft) => {
+        setLockScreenCountdown(secondsLeft);
+        if (secondsLeft <= 0) setLockScreenCountdown(null);
+      }
+    );
+  };
+
+  const handleToggleAutoAdhan = () => {
+    const updated = backgroundAdhanService.updateConfig({ enabled: !bgConfig.enabled });
+    setBgConfig(updated);
+    if (updated.enabled) {
+      soundService.unlockAudioSession().catch(() => {});
+      backgroundAdhanService.requestNotificationPermission().catch(() => {});
+    }
+  };
 
   const handleToggleDuaAudio = () => {
     if (isDuaPlaying) {
@@ -69,7 +94,76 @@ export const AdhanSection: React.FC<AdhanSectionProps> = ({
         </div>
       </div>
 
-      {/* Featured Highlight: Dhuhr & Asr Dedicated Adhan Cards */}
+      {/* Lock Screen Test Countdown Banner */}
+      {lockScreenCountdown !== null && lockScreenCountdown > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/20 border-2 border-amber-400 text-amber-200 flex flex-col sm:flex-row items-center justify-between gap-3 animate-pulse shadow-lg">
+          <div className="flex items-center gap-3 text-right">
+            <Lock className="w-6 h-6 text-amber-400 shrink-0" />
+            <div>
+              <div className="font-bold text-white text-sm">
+                أقفل شاشة هاتفك الآن للتأكد من انطلاق الأذان في وضع القفل!
+              </div>
+              <div className="text-xs text-amber-300">
+                سيصدح الأذان ويصلك تنبيه شاشة القفل بعد:{' '}
+                <strong className="text-white text-base font-mono">{lockScreenCountdown}</strong> ثوانٍ
+              </div>
+            </div>
+          </div>
+          <span className="px-3 py-1 rounded-xl bg-amber-500 text-stone-950 font-black text-xs">
+            أغلق الشاشة فوراً للتجربة
+          </span>
+        </div>
+      )}
+
+      {/* Background Adhan Quick Status & 5-Second Lock Screen Test Banner */}
+      <div className="p-4 sm:p-5 rounded-3xl bg-stone-900/90 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-950 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-6 h-6" />
+          </div>
+          <div className="space-y-0.5 text-right">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className="font-bold text-sm sm:text-base text-white">
+                حالة رفع الأذان التلقائي عند قفل الهاتف
+              </h4>
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                  bgConfig.enabled
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                }`}
+              >
+                {bgConfig.enabled ? '🟢 مفعّل وشغال بالخلفية' : '⚪ معطّل'}
+              </span>
+            </div>
+            <p className="text-xs text-stone-400 max-w-xl leading-relaxed">
+              يرفع الأذان تلقائياً في موعد كل صلاة بدقة حتى عند قفل شاشة الهاتف أو الخروج من التطبيق.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+          <button
+            onClick={handleStart5sTest}
+            className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-amber-950/60 transition-transform active:scale-95 cursor-pointer"
+            title="تجربة الأذان وإشعارات شاشة القفل خلال 5 ثوانٍ"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>تجربة مع قفل الشاشة (5 ثوانٍ)</span>
+          </button>
+
+          <button
+            onClick={handleToggleAutoAdhan}
+            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              bgConfig.enabled
+                ? 'bg-stone-800 hover:bg-stone-700 text-stone-300 border-stone-700'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-md'
+            }`}
+          >
+            {bgConfig.enabled ? 'إيقاف التلقائي' : 'تفعيل الأذان التلقائي'}
+          </button>
+        </div>
+      </div>
       <div className="space-y-3">
         <div className="flex items-center justify-between px-1">
           <h3 className="text-base font-bold text-white flex items-center gap-2">

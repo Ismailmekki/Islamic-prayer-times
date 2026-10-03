@@ -56,8 +56,24 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          importScripts: ['/sw-custom.js'],
+          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
+            {
+              urlPattern: /\/audio\/.*\.mp3$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'adhan-audio-cache',
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

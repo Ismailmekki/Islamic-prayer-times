@@ -190,18 +190,104 @@ export function getSurahForPage(page: number): SurahPageInfo {
   return SURAH_STARTING_PAGES[0];
 }
 
+export interface MushafServer {
+  id: string;
+  name: string;
+  shortName: string;
+  description: string;
+  getUrl: (pageNumber: number) => string;
+}
+
+export const MUSHAF_SERVERS: MushafServer[] = [
+  {
+    id: 'ksu',
+    name: 'سيرفر 1 (جامعة الملك سعود - مشروع آيات)',
+    shortName: 'سيرفر جامعة الملك سعود',
+    description: 'خادم رسمي فائق الاعتمادية والسرعة في السعودية والعالم العربي',
+    getUrl: (page: number) => `https://quran.ksu.edu.sa/png_big/${page}.png`,
+  },
+  {
+    id: 'quran_app',
+    name: 'سيرفر 2 (السحابة العالمية - Quran.app CDN)',
+    shortName: 'سيرفر السحابة العالمية',
+    description: 'شبكة توزيع سحابية عالمية عالية الدقة والسرعة',
+    getUrl: (page: number) => {
+      const padded = page.toString().padStart(3, '0');
+      return `https://files.quran.app/hafs/madani/width_1024/page${padded}.png`;
+    },
+  },
+  {
+    id: 'quranflash',
+    name: 'سيرفر 3 (مصحف المدينة فلاش - QuranFlash)',
+    shortName: 'سيرفر مصحف المدينة فلاش',
+    description: 'خادم مجمع الملك فهد طبعة المدينة المنورة',
+    getUrl: (page: number) => {
+      const padded = page.toString().padStart(4, '0');
+      return `https://www.quranflash.com/books/Medina2/data/N/${padded}.png`;
+    },
+  },
+  {
+    id: 'android_quran',
+    name: 'سيرفر 4 (خادم النسخ الاحتياطي)',
+    shortName: 'خادم النسخ الاحتياطي',
+    description: 'خادم بديل فائق التوافر لضمان عدم انقطاع التصفح إطلاقاً',
+    getUrl: (page: number) => {
+      const padded = page.toString().padStart(3, '0');
+      return `https://android.quran.com/data/width_1024/page${padded}.png`;
+    },
+  },
+];
+
+/**
+ * Returns the page image URL for a given server index
+ */
+export function getServerPageImageUrl(pageNumber: number, serverIndex: number): string {
+  const index = Math.max(0, Math.min(MUSHAF_SERVERS.length - 1, serverIndex));
+  return MUSHAF_SERVERS[index].getUrl(pageNumber);
+}
+
 /**
  * Construct primary high-res CDN URL for a page
  */
 export function getPrimaryPageImageUrl(pageNumber: number): string {
-  const padded = pageNumber.toString().padStart(3, '0');
-  return `https://files.quran.app/hafs/madani/width_1024/page${padded}.png`;
+  return getServerPageImageUrl(pageNumber, 0);
 }
 
 /**
- * Construct fallback CDN URL from QuranFlash Medina2 servers
+ * Construct fallback CDN URL
  */
 export function getFallbackPageImageUrl(pageNumber: number): string {
-  const padded = pageNumber.toString().padStart(4, '0');
-  return `https://www.quranflash.com/books/Medina2/data/N/${padded}.png`;
+  return getServerPageImageUrl(pageNumber, 1);
 }
+
+/**
+ * Quran PDF download links (King Fahd Complex Madinah Mushaf)
+ */
+export interface QuranDownloadResource {
+  title: string;
+  size: string;
+  description: string;
+  url: string;
+}
+
+export const QURAN_DOWNLOAD_RESOURCES: QuranDownloadResource[] = [
+  {
+    title: 'مصحف المدينة النبوية الشريف (طبعة مجمع الملك فهد - جودة عالية)',
+    size: '186 ميجابايت',
+    description: 'المصحف الشريف كاملاً بالرسم العثماني برواية حفص عن عاصم بصيغة PDF عالية الدقة.',
+    url: 'https://archive.org/download/quran-madina-colored/quran-madina-colored.pdf',
+  },
+  {
+    title: 'مصحف المدينة النبوية (الحجم الوسط الخفيف للأجهزة والهواتف)',
+    size: '62 ميجابايت',
+    description: 'نسخة ميسرة سريعة التحميل لجميع الهواتف والأجهزة الذكية للقراءة دون اتصال.',
+    url: 'https://archive.org/download/quran_pdf_hafs/quran.pdf',
+  },
+  {
+    title: 'مصحف مجمع الملك فهد لطباعة المصحف الشريف (النسخة الاقتصادية)',
+    size: '14.5 ميجابايت',
+    description: 'نسخة سريعة وصغيرة الحجم تلائم باقات الإنترنت الضعيفة والأجهزة القديمة.',
+    url: 'https://ia800201.us.archive.org/22/items/Quran_Pdf_604/Quran.pdf',
+  },
+];
+

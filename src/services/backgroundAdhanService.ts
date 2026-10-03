@@ -1,7 +1,7 @@
 /**
  * Background Adhan & Notification Service
- * Allows users to hear the full Adhan automatically at prayer time,
- * and receive pre-reminders (e.g. 5, 10, 15 minutes before Adhan) per prayer.
+ * Ensures Adhan and prayer notifications trigger reliably even when
+ * the phone is locked, in background, or offline.
  */
 
 import { PrayerTimeItem, AdhanVoice } from '../types/prayer';
@@ -41,6 +41,8 @@ export const DEFAULT_PRAYER_REMINDERS: PrayerRemindersPerPrayer = {
 export interface BackgroundAdhanConfig {
   enabled: boolean;
   notifyWithFullAudio: boolean;
+  keepActiveInBackground: boolean; // Keeps silent audio session alive for background wake
+  autoBypassActive: boolean; // Automatically bypasses browser notification block with direct in-app audio
   preAlertMinutes: number;
   fajrEnabled: boolean;
   duhaEnabled: boolean;
@@ -58,6 +60,8 @@ export interface NotificationStateInfo {
   isStandalone: boolean;
   isSupported: boolean;
   needsPWAInstallOnIOS: boolean;
+  isAudioSessionActive: boolean;
+  autoBypassActive: boolean;
 }
 
 const STORAGE_KEY = 'salati_bg_adhan_config';
@@ -65,6 +69,8 @@ const STORAGE_KEY = 'salati_bg_adhan_config';
 const DEFAULT_CONFIG: BackgroundAdhanConfig = {
   enabled: true,
   notifyWithFullAudio: true,
+  keepActiveInBackground: true,
+  autoBypassActive: true,
   preAlertMinutes: 0,
   fajrEnabled: true,
   duhaEnabled: true,
@@ -79,12 +85,39 @@ const DEFAULT_CONFIG: BackgroundAdhanConfig = {
 class BackgroundAdhanService {
   private config: BackgroundAdhanConfig;
   private checkIntervalId: number | null = null;
+  private workerTimer: Worker | null = null;
+  private exactTimerIds: number[] = [];
   private triggeredAlertKeys: Set<string> = new Set();
   private onAdhanTriggerCallback: ((prayerName: string, voice: AdhanVoice) => void) | null = null;
   private wakeLock: unknown = null;
+  private lastPrayerProvider: (() => { prayerList: PrayerTimeItem[]; cityName: string; selectedVoice: AdhanVoice }) | null = null;
 
   constructor() {
     this.config = this.loadConfig();
+    this.triggeredAlertKeys = this.loadTriggeredAlertKeys();
+    this.initVisibilityListeners();
+  }
+
+  private loadTriggeredAlertKeys(): Set<string> {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const today = new Date().toDateString();
+      const raw = localStorage.getItem(`salati_adhan_alerts_${today}`);
+      if (raw) return new Set(JSON.parse(raw));
+    } catch {}
+    return new Set();
+  }
+
+  private markAlertTriggered(key: string): void {
+    this.triggeredAlertKeys.add(key);
+    if (typeof window === 'undefined') return;
+    try {
+      const today = new Date().toDateString();
+      localStorage.setItem(
+        `salati_adhan_alerts_${today}`,
+        JSON.stringify(Array.from(this.triggeredAlertKeys))
+      );
+    } catch {}
   }
 
   public loadConfig(): BackgroundAdhanConfig {
@@ -128,6 +161,16 @@ class BackgroundAdhanService {
         : this.config.prayerReminders,
     };
     this.saveConfig(updated);
+
+    if (updated.keepActiveInBackground && updated.enabled) {
+      soundService.unlockAudioSession().catch(() => {});
+      this.requestWakeLock().catch(() => {});
+    }
+
+    if (this.lastPrayerProvider) {
+      this.scheduleExactAlarms(this.lastPrayerProvider);
+    }
+
     return updated;
   }
 
@@ -152,9 +195,24 @@ class BackgroundAdhanService {
     this.onAdhanTriggerCallback = cb;
   }
 
-  /**
-   * Comprehensive detection of Notification state and iOS platform limitations
-   */
+  private initVisibilityListeners(): void {
+    if (typeof window === 'undefined') return;
+
+    const handleWakeup = () => {
+      if (this.lastPrayerProvider && this.config.enabled) {
+        this.runPrayerCheck(this.lastPrayerProvider());
+        this.scheduleExactAlarms(this.lastPrayerProvider);
+      }
+    };
+
+    window.addEventListener('focus', handleWakeup);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        handleWakeup();
+      }
+    });
+  }
+
   public getNotificationState(): NotificationStateInfo {
     if (typeof window === 'undefined') {
       return {
@@ -163,6 +221,8 @@ class BackgroundAdhanService {
         isStandalone: false,
         isSupported: false,
         needsPWAInstallOnIOS: false,
+        isAudioSessionActive: false,
+        autoBypassActive: true,
       };
     }
 
@@ -190,6 +250,8 @@ class BackgroundAdhanService {
       isStandalone,
       isSupported: hasNotificationAPI,
       needsPWAInstallOnIOS,
+      isAudioSessionActive: soundService.isAudioSessionUnlocked(),
+      autoBypassActive: this.config.autoBypassActive,
     };
   }
 
@@ -200,15 +262,15 @@ class BackgroundAdhanService {
     return Notification.permission;
   }
 
-  /**
-   * Request system notification permission with full browser compatibility
-   */
   public async requestNotificationPermission(): Promise<NotificationPermission> {
     if (typeof window === 'undefined' || !('Notification' in window)) {
       return 'denied';
     }
 
+    soundService.unlockAudioSession().catch(() => {});
+
     if (Notification.permission === 'granted') {
+      this.requestWakeLock();
       return 'granted';
     }
 
@@ -233,7 +295,6 @@ class BackgroundAdhanService {
         permission = 'denied';
       }
 
-      // If just granted, attempt to register WakeLock and warm up audio context
       if (permission === 'granted') {
         this.requestWakeLock();
       }
@@ -245,9 +306,6 @@ class BackgroundAdhanService {
     }
   }
 
-  /**
-   * Request Screen WakeLock (API where available) to prevent aggressive OS suspension
-   */
   public async requestWakeLock(): Promise<boolean> {
     if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) {
       return false;
@@ -273,12 +331,12 @@ class BackgroundAdhanService {
     }
   }
 
-  /**
-   * Releases WakeLock
-   */
   public releaseWakeLock(): void {
     try {
-      if (this.wakeLock && typeof (this.wakeLock as { release?: () => Promise<void> }).release === 'function') {
+      if (
+        this.wakeLock &&
+        typeof (this.wakeLock as { release?: () => Promise<void> }).release === 'function'
+      ) {
         (this.wakeLock as { release: () => Promise<void> }).release();
         this.wakeLock = null;
       }
@@ -288,8 +346,8 @@ class BackgroundAdhanService {
   }
 
   /**
-   * Dispatches system notification safely via Service Worker registration on mobile,
-   * falling back to window Notification constructor on desktop.
+   * Dispatches system notification via Service Worker registration on mobile
+   * with guaranteed fast timeout so it NEVER hangs if service worker is inactive.
    */
   public async dispatchSystemNotification(
     title: string,
@@ -300,182 +358,292 @@ class BackgroundAdhanService {
     if (typeof window === 'undefined' || !('Notification' in window)) return false;
     if (Notification.permission !== 'granted') return false;
 
-    const options: NotificationOptions & { vibrate?: number[] } = {
+    const options: NotificationOptions & {
+      vibrate?: number[];
+      actions?: Array<{ action: string; title: string }>;
+      renotify?: boolean;
+    } = {
       body,
       icon: '/pwa-192x192.png',
       badge: '/pwa-192x192.png',
       tag,
       requireInteraction: true,
       silent: false,
-      // Haptic vibration pattern for notifications: vibration / pause / vibration
-      vibrate: [250, 100, 250, 100, 450],
+      renotify: true,
+      vibrate: [600, 300, 600, 300, 1200],
+      actions: [
+        { action: 'listen_adhan', title: '🔊 استماع للأذان' },
+        { action: 'open_app', title: '🕌 فتح صلاتي' },
+      ],
       data: {
         url: '/',
         ...data,
       },
     };
 
-    // 1. Mandatory on mobile browsers (Android Chrome, PWA): use ServiceWorkerRegistration
+    // 1. Mobile ServiceWorker registration with 1.2s timeout fallback
+    let reg: ServiceWorkerRegistration | undefined;
     if ('serviceWorker' in navigator) {
       try {
-        const reg = await navigator.serviceWorker.ready;
-        if (reg && typeof reg.showNotification === 'function') {
-          await reg.showNotification(title, options);
-          return true;
+        reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1200)),
+        ]);
+        if (!reg) {
+          reg = (await navigator.serviceWorker.getRegistration()) || undefined;
         }
       } catch (swErr) {
-        console.warn('ServiceWorker showNotification failed, attempting direct Notification fallback:', swErr);
+        console.warn('SW lookup error:', swErr);
       }
     }
 
-    // 2. Direct Window Notification fallback (Desktop browsers)
-    try {
-      const notification = new Notification(title, options);
-      notification.onclick = () => {
-        try {
-          window.focus();
-        } catch {}
-        notification.close();
-      };
-      return true;
-    } catch (err) {
-      console.warn('Direct Notification constructor failed:', err);
-      return false;
+    if (reg && typeof reg.showNotification === 'function') {
+      try {
+        await reg.showNotification(title, options);
+        return true;
+      } catch (err) {
+        console.warn('SW showNotification error, falling back to window Notification:', err);
+      }
     }
+
+    // 2. Direct Window Notification fallback
+    if (typeof Notification === 'function') {
+      try {
+        const notification = new Notification(title, options);
+        notification.onclick = () => {
+          try {
+            window.focus();
+          } catch {}
+          notification.close();
+        };
+        return true;
+      } catch (err) {
+        console.warn('Direct Notification constructor failed:', err);
+      }
+    }
+
+    return false;
   }
 
-  /**
-   * Send high-priority browser notification for Adhan
-   */
   public async sendPrayerNotification(prayerName: string, cityName: string): Promise<boolean> {
-    const title = `🕌 حَانَ الآن وقت أذان ${prayerName}`;
-    const body = `الله أكبر، الله أكبر.. رُفع أذان ${prayerName} حسب التوقيت المحلي لمدينة ${cityName}. اضغط لفتح التطبيق وسماع الأذان.`;
+    const title = `🕌 حَانَ الآن وقت أذان صلاة ${prayerName}`;
+    const body = `الله أكبر، الله أكبر.. رُفع الآن أذان ${prayerName} حسب التوقيت المحلي لمدينة ${cityName}. اضغط لفتح التطبيق وسماع الأذان.`;
     const tag = `adhan-${prayerName}-${new Date().toDateString()}`;
     return this.dispatchSystemNotification(title, body, tag, { prayerName, type: 'adhan' });
   }
 
-  /**
-   * Send pre-adhan reminder notification (e.g. 5 or 10 min before)
-   */
   public async sendPrePrayerNotification(
     prayerName: string,
     cityName: string,
     minutesBefore: number
   ): Promise<boolean> {
-    const title = `⏰ اقترب أذان صلاة ${prayerName} (${minutesBefore} دقائق)`;
-    const body = `تذكير: بقي ${minutesBefore} دقائق على موعد أذان ${prayerName} في مدينة ${cityName}. استعد للوضوء والصلاة.`;
+    const title = `⏰ اقترب موعد أذان ${prayerName} (${minutesBefore} دقائق)`;
+    const body = `تذكير صلاتي: بقي ${minutesBefore} دقائق على موعد أذان ${prayerName} بمدينة ${cityName}. استعد للوضوء والصلاة.`;
     const tag = `pre-adhan-${prayerName}-${minutesBefore}-${new Date().toDateString()}`;
-    return this.dispatchSystemNotification(title, body, tag, { prayerName, minutesBefore, type: 'pre-adhan' });
+    return this.dispatchSystemNotification(title, body, tag, {
+      prayerName,
+      minutesBefore,
+      type: 'pre-adhan',
+    });
   }
 
-  /**
-   * Send instant test notification so the user can verify device lock screen reception
-   */
   public async sendTestNotification(cityName: string): Promise<boolean> {
     const title = '🕌 تجربة تنبيه أذان صلاتي';
-    const body = `تم تفعيل إشعارات الأذان بنجاح لمدينة ${cityName}! ستصلك تنبيهات الصلوات في وقتها المحدد تلقائياً حتى خارج التطبيق.`;
+    const body = `تم تفعيل إشعارات الأذان بنجاح لمدينة ${cityName}! ستصلك تنبيهات الصلوات في وقتها المحدد تلقائياً حتى عندما يكون الهاتف مقفلاً.`;
     const tag = `test-adhan-${Date.now()}`;
     return this.dispatchSystemNotification(title, body, tag, { type: 'test' });
   }
 
-  /**
-   * Setup media session metadata so Android and iOS handle background audio smoothly
-   */
-  private setupMediaSession(prayerName: string): void {
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: `أذان صلاة ${prayerName}`,
-          artist: 'تطبيق صلاتي',
-          album: 'مواقيت الصلاة والأذان',
-          artwork: [
-            { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
-          ],
-        });
+  public scheduleLockScreenTest(
+    cityName: string,
+    voice: AdhanVoice,
+    onCountdown?: (secondsLeft: number) => void
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      soundService.unlockAudioSession().catch(() => {});
 
-        navigator.mediaSession.setActionHandler('play', () => {
-          soundService.resumeAdhan();
-        });
-        navigator.mediaSession.setActionHandler('pause', () => {
-          soundService.pauseAdhan();
-        });
-        navigator.mediaSession.setActionHandler('stop', () => {
-          soundService.stopAdhan();
-        });
-      } catch (e) {
-        // mediaSession optional
-      }
-    }
+      let count = 5;
+      if (onCountdown) onCountdown(count);
+
+      const interval = window.setInterval(() => {
+        count--;
+        if (onCountdown) onCountdown(count);
+
+        if (count <= 0) {
+          clearInterval(interval);
+          this.executeAdhanAlert('تجربة الأذان وشاشة القفل', cityName, voice);
+          resolve();
+        }
+      }, 1000);
+    });
   }
 
-  /**
-   * Starts precision background polling ticker
-   */
   public startPrayerMonitor(
-    getUpcomingPrayers: () => { prayerList: PrayerTimeItem[]; cityName: string; selectedVoice: AdhanVoice }
+    getUpcomingPrayers: () => {
+      prayerList: PrayerTimeItem[];
+      cityName: string;
+      selectedVoice: AdhanVoice;
+    }
   ): void {
+    this.lastPrayerProvider = getUpcomingPrayers;
+
     if (this.checkIntervalId) {
       clearInterval(this.checkIntervalId);
     }
 
-    // Check every 10 seconds
+    // 1. Run immediate check
+    this.runPrayerCheck(getUpcomingPrayers());
+
+    // 2. Schedule exact alarms for all 5 daily prayers within next 24h
+    this.scheduleExactAlarms(getUpcomingPrayers);
+
+    // 3. Precision interval check every 5 seconds
     this.checkIntervalId = window.setInterval(() => {
       if (!this.config.enabled) return;
+      this.runPrayerCheck(getUpcomingPrayers());
+    }, 5000);
 
-      const { prayerList, cityName, selectedVoice } = getUpcomingPrayers();
-      const now = new Date();
-      const nowMs = now.getTime();
-      const todayDateStr = now.toDateString();
+    // 4. Background Web Worker ticker
+    this.startWorkerTicker(getUpcomingPrayers);
+  }
 
-      const reminders = this.config.prayerReminders || DEFAULT_PRAYER_REMINDERS;
+  private startWorkerTicker(
+    getUpcomingPrayers: () => {
+      prayerList: PrayerTimeItem[];
+      cityName: string;
+      selectedVoice: AdhanVoice;
+    }
+  ): void {
+    if (this.workerTimer) {
+      this.workerTimer.terminate();
+      this.workerTimer = null;
+    }
 
-      prayerList.forEach((prayer) => {
-        const pId = prayer.id as keyof PrayerRemindersPerPrayer;
-        const rule = reminders[pId];
+    try {
+      const blob = new Blob(
+        [
+          `
+          let interval = setInterval(() => {
+            postMessage('tick');
+          }, 5000);
+        `,
+        ],
+        { type: 'application/javascript' }
+      );
+      this.workerTimer = new Worker(URL.createObjectURL(blob));
+      this.workerTimer.onmessage = () => {
+        if (!this.config.enabled) return;
+        this.runPrayerCheck(getUpcomingPrayers());
+      };
+    } catch {
+      // Web Worker fallback ignored
+    }
+  }
 
-        // 1. Check Pre-Adhan reminder (e.g. 5, 10, 15 minutes before)
-        if (rule && rule.enabled && rule.preAlertMinutes > 0) {
-          const preAlertTargetMs = prayer.timestamp - rule.preAlertMinutes * 60 * 1000;
-          const preDiffMs = nowMs - preAlertTargetMs;
-          const preKey = `${todayDateStr}-${prayer.id}-pre-${rule.preAlertMinutes}`;
+  /**
+   * Pre-schedule exact setTimeouts for all upcoming prayers.
+   * If a prayer has passed today (e.g. at night), it calculates the exact
+   * millisecond timestamp for tomorrow so Fajr is NEVER missed!
+   */
+  private scheduleExactAlarms(
+    getUpcomingPrayers: () => {
+      prayerList: PrayerTimeItem[];
+      cityName: string;
+      selectedVoice: AdhanVoice;
+    }
+  ): void {
+    this.exactTimerIds.forEach((id) => clearTimeout(id));
+    this.exactTimerIds = [];
 
-          if (preDiffMs >= 0 && preDiffMs < 45000 && !this.triggeredAlertKeys.has(preKey)) {
-            this.triggeredAlertKeys.add(preKey);
-            this.sendPrePrayerNotification(prayer.nameArabic, cityName, rule.preAlertMinutes);
-            if (rule.soundType !== 'silent') {
-              soundService.playTasbeehClick();
-            }
+    const { prayerList, cityName, selectedVoice } = getUpcomingPrayers();
+    const nowMs = Date.now();
+
+    prayerList.forEach((prayer) => {
+      if (!prayer.isPrayer) return;
+
+      let targetTimeMs = prayer.timestamp;
+      // If prayer already passed today, target is tomorrow at same time
+      if (targetTimeMs <= nowMs) {
+        targetTimeMs += 24 * 60 * 60 * 1000;
+      }
+
+      const deltaMs = targetTimeMs - nowMs;
+      if (deltaMs > 0 && deltaMs <= 24 * 60 * 60 * 1000) {
+        const timerId = window.setTimeout(() => {
+          this.executeAdhanAlert(prayer.nameArabic, cityName, selectedVoice);
+        }, deltaMs);
+        this.exactTimerIds.push(timerId);
+      }
+    });
+  }
+
+  /**
+   * Core check logic with clean daily reset and generous catch-up window
+   */
+  private runPrayerCheck(data: {
+    prayerList: PrayerTimeItem[];
+    cityName: string;
+    selectedVoice: AdhanVoice;
+  }): void {
+    const { prayerList, cityName, selectedVoice } = data;
+    const now = new Date();
+    const nowMs = now.getTime();
+    const todayDateStr = now.toDateString();
+
+    // Clean up old keys from previous days
+    for (const key of this.triggeredAlertKeys) {
+      if (!key.startsWith(todayDateStr)) {
+        this.triggeredAlertKeys.delete(key);
+      }
+    }
+
+    const reminders = this.config.prayerReminders || DEFAULT_PRAYER_REMINDERS;
+
+    prayerList.forEach((prayer) => {
+      const pId = prayer.id as keyof PrayerRemindersPerPrayer;
+      const rule = reminders[pId];
+
+      // 1. Check Pre-Adhan reminder
+      if (rule && rule.enabled && rule.preAlertMinutes > 0) {
+        const preAlertTargetMs = prayer.timestamp - rule.preAlertMinutes * 60 * 1000;
+        const preDiffMs = nowMs - preAlertTargetMs;
+        const preKey = `${todayDateStr}-${prayer.id}-pre-${rule.preAlertMinutes}`;
+
+        if (preDiffMs >= 0 && preDiffMs < 5 * 60 * 1000 && !this.triggeredAlertKeys.has(preKey)) {
+          this.markAlertTriggered(preKey);
+          this.sendPrePrayerNotification(prayer.nameArabic, cityName, rule.preAlertMinutes);
+          if (rule.soundType !== 'silent') {
+            soundService.playTasbeehClick();
           }
         }
+      }
 
-        // 2. Check Exact Adhan Time (Only for actual prayers)
-        if (!prayer.isPrayer) return;
+      // 2. Check Exact Adhan Time (Only for actual prayers)
+      if (!prayer.isPrayer) return;
 
-        // Check if enabled for this prayer
-        const isPrayerEnabled =
-          (prayer.id === 'fajr' && this.config.fajrEnabled) ||
-          (prayer.id === 'duha' && this.config.duhaEnabled) ||
-          (prayer.id === 'dhuhr' && this.config.dhuhrEnabled) ||
-          (prayer.id === 'jumuah' && this.config.jumuahEnabled) ||
-          (prayer.id === 'asr' && this.config.asrEnabled) ||
-          (prayer.id === 'maghrib' && this.config.maghribEnabled) ||
-          (prayer.id === 'isha' && this.config.ishaEnabled) ||
-          (rule && rule.enabled);
+      const isPrayerEnabled =
+        (prayer.id === 'fajr' && this.config.fajrEnabled) ||
+        (prayer.id === 'duha' && this.config.duhaEnabled) ||
+        (prayer.id === 'dhuhr' && this.config.dhuhrEnabled) ||
+        (prayer.id === 'jumuah' && this.config.jumuahEnabled) ||
+        (prayer.id === 'asr' && this.config.asrEnabled) ||
+        (prayer.id === 'maghrib' && this.config.maghribEnabled) ||
+        (prayer.id === 'isha' && this.config.ishaEnabled) ||
+        (rule && rule.enabled);
 
-        if (!isPrayerEnabled) return;
+      if (!isPrayerEnabled) return;
 
-        const prayerTimeMs = prayer.timestamp;
-        const diffMs = nowMs - prayerTimeMs;
-        const adhanKey = `${todayDateStr}-${prayer.id}-exact`;
+      const prayerTimeMs = prayer.timestamp;
+      const diffMs = nowMs - prayerTimeMs;
+      const adhanKey = `${todayDateStr}-${prayer.id}-exact`;
 
-        // If time is within [0, 45 seconds] of prayer time and has not triggered today yet
-        if (diffMs >= 0 && diffMs < 45000 && !this.triggeredAlertKeys.has(adhanKey)) {
-          this.triggeredAlertKeys.add(adhanKey);
-          this.executeAdhanAlert(prayer.nameArabic, cityName, selectedVoice);
-        }
-      });
-    }, 10000);
+      // 45-minute catch-up window: Even if phone was asleep and screen locked,
+      // it triggers the Adhan and notification as soon as it wakes up within 45 min!
+      if (diffMs >= 0 && diffMs < 45 * 60 * 1000 && !this.triggeredAlertKeys.has(adhanKey)) {
+        this.markAlertTriggered(adhanKey);
+        this.executeAdhanAlert(prayer.nameArabic, cityName, selectedVoice);
+      }
+    });
   }
 
   public stopPrayerMonitor(): void {
@@ -483,19 +651,23 @@ class BackgroundAdhanService {
       clearInterval(this.checkIntervalId);
       this.checkIntervalId = null;
     }
+    if (this.workerTimer) {
+      this.workerTimer.terminate();
+      this.workerTimer = null;
+    }
+    this.exactTimerIds.forEach((id) => clearTimeout(id));
+    this.exactTimerIds = [];
+    this.releaseWakeLock();
   }
 
   /**
    * Trigger the Adhan playback + notification
    */
   public executeAdhanAlert(prayerName: string, cityName: string, voice: AdhanVoice): void {
-    // 1. Send system notification (works via service worker on mobile)
+    // 1. Send system lock-screen notification
     this.sendPrayerNotification(prayerName, cityName);
 
-    // 2. Configure system media lock-screen session
-    this.setupMediaSession(prayerName);
-
-    // 3. Resolve dedicated adhan voice for Dhuhr, Asr, or Fajr if appropriate
+    // 2. Resolve dedicated adhan voice for Fajr, Dhuhr, Asr
     let effectiveVoice = voice;
     if (prayerName.includes('الظهر')) {
       const dhuhrV = ADHAN_VOICES.find((v) => v.id === 'dhuhr_adhan');
@@ -508,12 +680,12 @@ class BackgroundAdhanService {
       if (fajrV) effectiveVoice = fajrV;
     }
 
-    // 4. Play full Adhan audio if audio enabled
+    // 3. Play full Adhan audio with background audio pipeline
     if (this.config.notifyWithFullAudio) {
       soundService.playAdhan(effectiveVoice.audioUrl);
     }
 
-    // 5. Trigger UI callback
+    // 4. Trigger UI callback
     if (this.onAdhanTriggerCallback) {
       this.onAdhanTriggerCallback(prayerName, effectiveVoice);
     }

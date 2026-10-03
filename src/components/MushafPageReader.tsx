@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  ChevronLeft,
-  ChevronRight,
   Bookmark,
   BookmarkCheck,
   Maximize2,
@@ -26,6 +24,10 @@ import {
   X,
   FileText,
   GraduationCap,
+  Server,
+  Download,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { TafsirSection } from './TafsirSection';
 import { EducationalTafsirModal } from './EducationalTafsirModal';
@@ -33,10 +35,11 @@ import { tafsirService } from '../services/tafsirService';
 import {
   SURAH_STARTING_PAGES,
   JUZ_STARTING_PAGES,
+  MUSHAF_SERVERS,
+  getServerPageImageUrl,
+  QURAN_DOWNLOAD_RESOURCES,
   getJuzForPage,
   getSurahForPage,
-  getPrimaryPageImageUrl,
-  getFallbackPageImageUrl,
 } from '../data/mushafPagesData';
 import { ALL_SURAHS, QURAN_RECITERS, getSurahAudioUrl, QuranReciter } from '../data/quranData';
 
@@ -73,10 +76,23 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
     return null;
   });
 
-  // Image loading & fallback state
+  // Multi-server CDN state & active mirror
+  const [activeServerIndex, setActiveServerIndex] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('salati_mushaf_server_index');
+      if (saved !== null) {
+        const idx = parseInt(saved, 10);
+        if (idx >= 0 && idx < MUSHAF_SERVERS.length) return idx;
+      }
+    } catch {}
+    return 0; // Default to Server 1: King Saud University (Official & Highly Reliable)
+  });
+
   const [isLoadingImage, setIsLoadingImage] = useState<boolean>(true);
-  const [useFallbackServer, setUseFallbackServer] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState<boolean>(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const watchdogTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Zoom & View controls
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -103,11 +119,34 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Fluid touch & mouse drag swipe state for natural page turning
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [touchStartY, setTouchStartY] = useState<number | null>(null);
+  const [touchCurrentX, setTouchCurrentX] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragOffset, setDragOffset] = useState<number>(0);
+
   // Current metadata
   const currentSurah = getSurahForPage(currentPage);
   const currentJuz = getJuzForPage(currentPage);
 
-  // Save current page and load its verses
+  // Advance to next server automatically or manually
+  const advanceToNextServer = (notify = true) => {
+    setActiveServerIndex((prev) => {
+      const nextIndex = (prev + 1) % MUSHAF_SERVERS.length;
+      try {
+        localStorage.setItem('salati_mushaf_server_index', nextIndex.toString());
+      } catch {}
+      if (notify) {
+        showToast(`جارٍ المحاولة عبر: ${MUSHAF_SERVERS[nextIndex].shortName}`);
+      }
+      return nextIndex;
+    });
+    setIsLoadingImage(true);
+    setImageError(false);
+  };
+
+  // Save current page and load its verses + handle image loading watchdog
   useEffect(() => {
     try {
       localStorage.setItem('salati_mushaf_current_page', currentPage.toString());
@@ -115,7 +154,22 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
     setInputPage(currentPage.toString());
     setIsLoadingImage(true);
     setImageError(false);
-    setUseFallbackServer(false);
+
+    // Watchdog timer: If loading takes > 4.5 seconds on current server, auto-switch to next server!
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+    }
+    watchdogTimerRef.current = setTimeout(() => {
+      if (imgRef.current && (!imgRef.current.complete || imgRef.current.naturalWidth === 0)) {
+        console.warn(`Server ${activeServerIndex} timed out on page ${currentPage}, auto-switching server.`);
+        advanceToNextServer(true);
+      }
+    }, 4500);
+
+    // If image is already loaded in cache synchronously
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      setIsLoadingImage(false);
+    }
 
     let isCancelled = false;
     setIsLoadingPageVerses(true);
@@ -128,20 +182,23 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
 
     return () => {
       isCancelled = true;
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+      }
     };
-  }, [currentPage]);
+  }, [currentPage, activeServerIndex]);
 
-  // Preload adjacent pages for instant flipping
+  // Preload adjacent pages using active server for instant flipping
   useEffect(() => {
     if (currentPage > 1) {
       const prevImg = new Image();
-      prevImg.src = getPrimaryPageImageUrl(currentPage - 1);
+      prevImg.src = getServerPageImageUrl(currentPage - 1, activeServerIndex);
     }
     if (currentPage < 604) {
       const nextImg = new Image();
-      nextImg.src = getPrimaryPageImageUrl(currentPage + 1);
+      nextImg.src = getServerPageImageUrl(currentPage + 1, activeServerIndex);
     }
-  }, [currentPage]);
+  }, [currentPage, activeServerIndex]);
 
   // Keyboard navigation (Arrow keys)
   useEffect(() => {
@@ -151,57 +208,165 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
         return;
       }
 
-      // In Arabic (Right to Left):
-      // Left Arrow = Next page (flipping leftwards)
-      // Right Arrow = Previous page (flipping rightwards)
-      if (e.key === 'ArrowLeft') {
-        goToNextPage();
-      } else if (e.key === 'ArrowRight') {
-        goToPrevPage();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPage]);
-
-  // Cleanup audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
-    };
-  }, []);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2800);
-  };
-
-  const goToPage = (page: number) => {
-    const validPage = Math.max(1, Math.min(604, page));
-    setCurrentPage(validPage);
-  };
-
-  // Next page (Arabic reading direction: advances page count)
-  const goToNextPage = () => {
-    if (currentPage < 604) {
-      goToPage(currentPage + 1);
-    } else {
-      showToast('أنت الآن في الصفحة الأخيرة (ختام المصحف الشريف)');
+    // In Arabic reading (Right to Left):
+    // Right Arrow = Next page (advance forward in Quran: e.g. 293 -> 294 to continue Surah Al-Kahf)
+    // Left Arrow = Previous page (go back: e.g. 293 -> 292)
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      goToNextPage();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      goToPrevPage();
     }
   };
 
-  // Previous page
-  const goToPrevPage = () => {
-    if (currentPage > 1) {
+  window.addEventListener('keydown', handleKeyDown);
+  return () => window.removeEventListener('keydown', handleKeyDown);
+}, [currentPage]);
+
+// Cleanup audio on unmount
+useEffect(() => {
+  return () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+    }
+  };
+}, []);
+
+const showToast = (msg: string) => {
+  setToastMessage(msg);
+  setTimeout(() => {
+    setToastMessage(null);
+  }, 2800);
+};
+
+const goToPage = (page: number) => {
+  const validPage = Math.max(1, Math.min(604, page));
+  setCurrentPage(validPage);
+};
+
+// Next page (advances page count: e.g. 293 -> 294 to continue the Surah)
+const goToNextPage = () => {
+  if (currentPage < 604) {
+    if (navigator.vibrate) {
+      try { navigator.vibrate(10); } catch {}
+    }
+    setDragOffset(70);
+    setTimeout(() => {
+      goToPage(currentPage + 1);
+      setDragOffset(-50);
+      requestAnimationFrame(() => {
+        setTimeout(() => setDragOffset(0), 40);
+      });
+    }, 100);
+  } else {
+    setDragOffset(0);
+    showToast('أنت الآن في الصفحة الأخيرة (ختام المصحف الشريف)');
+  }
+};
+
+// Previous page (returns to previous page: e.g. 293 -> 292)
+const goToPrevPage = () => {
+  if (currentPage > 1) {
+    if (navigator.vibrate) {
+      try { navigator.vibrate(10); } catch {}
+    }
+    setDragOffset(-70);
+    setTimeout(() => {
       goToPage(currentPage - 1);
-    } else {
-      showToast('أنت الآن في الصفحة الأولى (فاتحة الكتاب)');
+      setDragOffset(50);
+      requestAnimationFrame(() => {
+        setTimeout(() => setDragOffset(0), 40);
+      });
+    }, 100);
+  } else {
+    setDragOffset(0);
+    showToast('أنت الآن في الصفحة الأولى (فاتحة الكتاب)');
+  }
+};
+
+// Touch Handlers for mobile & tablet (Smooth horizontal swipe)
+const handleTouchStart = (e: React.TouchEvent) => {
+  if (e.touches.length !== 1) return;
+  setTouchStartX(e.touches[0].clientX);
+  setTouchStartY(e.touches[0].clientY);
+  setTouchCurrentX(e.touches[0].clientX);
+  setIsDragging(true);
+  setDragOffset(0);
+};
+
+const handleTouchMove = (e: React.TouchEvent) => {
+  if (!isDragging || touchStartX === null || touchStartY === null) return;
+  const currentX = e.touches[0].clientX;
+  const currentY = e.touches[0].clientY;
+  const deltaX = currentX - touchStartX;
+  const deltaY = currentY - touchStartY;
+
+  // Detect horizontal swipe intent (prevent drag when user simply scrolls vertically)
+  if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 8) {
+    setTouchCurrentX(currentX);
+    setDragOffset(deltaX * 0.75);
+  }
+};
+
+const handleTouchEnd = () => {
+  if (!isDragging || touchStartX === null || touchCurrentX === null) {
+    setIsDragging(false);
+    setDragOffset(0);
+    return;
+  }
+
+  const deltaX = touchCurrentX - touchStartX;
+  const minSwipeDistance = 35; // Easy and responsive to trigger
+
+  // In Arabic Mushaf flipping:
+  // Swiping Rightwards (deltaX > 0): Flip to NEXT PAGE (e.g. 293 -> 294, continuing Surah Al-Kahf)
+  // Swiping Leftwards (deltaX < 0): Flip to PREVIOUS PAGE (e.g. 293 -> 292, returning to Surah Al-Isra')
+  if (deltaX > minSwipeDistance) {
+    goToNextPage();
+  } else if (deltaX < -minSwipeDistance) {
+    goToPrevPage();
+  } else {
+    setDragOffset(0);
+  }
+
+    setIsDragging(false);
+    setTouchStartX(null);
+    setTouchStartY(null);
+    setTouchCurrentX(null);
+  };
+
+  // Mouse drag handlers for desktop / trackpad
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    setTouchStartX(e.clientX);
+    setTouchStartY(e.clientY);
+    setTouchCurrentX(e.clientX);
+    setIsDragging(true);
+    setDragOffset(0);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || touchStartX === null) return;
+    const currentX = e.clientX;
+    const currentY = e.clientY;
+    const deltaX = currentX - touchStartX;
+    const deltaY = currentY - (touchStartY || 0);
+
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 6) {
+      setTouchCurrentX(currentX);
+      setDragOffset(deltaX * 0.75);
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (isDragging) {
+      handleTouchEnd();
+    }
+  };
+
+  const handleMouseLeave = () => {
+    if (isDragging) {
+      handleTouchEnd();
     }
   };
 
@@ -261,10 +426,8 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
     }
   };
 
-  // Current image source
-  const currentImageUrl = useFallbackServer
-    ? getFallbackPageImageUrl(currentPage)
-    : getPrimaryPageImageUrl(currentPage);
+  // Current image source computed from activeServerIndex
+  const currentImageUrl = getServerPageImageUrl(currentPage, activeServerIndex);
 
   return (
     <div
@@ -465,10 +628,44 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
               انتقال
             </button>
           </form>
+
+          {/* Server Selector for Maximum Reliability */}
+          <div className="flex items-center gap-1.5 bg-stone-950 border border-stone-800 rounded-xl px-2.5 py-1.5" title="خادم تحميل صفحات المصحف الشريف">
+            <Server className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-[11px] text-stone-400 font-semibold hidden md:inline">الخادم:</span>
+            <select
+              value={activeServerIndex}
+              onChange={(e) => {
+                const idx = parseInt(e.target.value, 10);
+                setActiveServerIndex(idx);
+                try {
+                  localStorage.setItem('salati_mushaf_server_index', idx.toString());
+                } catch {}
+                showToast(`تم التبديل إلى: ${MUSHAF_SERVERS[idx].shortName}`);
+              }}
+              className="bg-transparent text-xs text-stone-200 font-semibold outline-none cursor-pointer"
+            >
+              {MUSHAF_SERVERS.map((server, sIdx) => (
+                <option key={server.id} value={sIdx} className="bg-stone-900 text-stone-100">
+                  {server.shortName}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Right: Display & Tool Buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Download Quran PDF Button */}
+          <button
+            onClick={() => setIsDownloadModalOpen(true)}
+            className="p-2 rounded-xl bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-white font-bold border border-emerald-400/40 text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-950/50"
+            title="تحميل المصحف الشريف كاملاً (PDF) للقراءة بدون إنترنت"
+          >
+            <Download className="w-4 h-4 text-emerald-300" />
+            <span className="hidden sm:inline">تحميل المصحف (PDF)</span>
+          </button>
+
           {/* Educational Tafsir Button */}
           <button
             onClick={() => {
@@ -607,47 +804,21 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
         </div>
       </div>
 
-      {/* Main Mushaf Viewing Canvas with Turn Buttons */}
+      {/* Main Mushaf Viewing Canvas (No top buttons covering text, full smooth touch swipe) */}
       <div className="relative flex flex-col items-center">
-        {/* Navigation controls top bar */}
-        <div className="w-full max-w-3xl flex items-center justify-between px-2 py-1 text-xs text-stone-400 font-semibold mb-1">
-          {/* Note in Arabic: Turning to page + 1 is flipping Left */}
-          <button
-            onClick={goToNextPage}
-            disabled={currentPage >= 604}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-              currentPage >= 604
-                ? 'opacity-40 cursor-not-allowed bg-stone-900 border-stone-800 text-stone-600'
-                : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-500/40 active:scale-95'
-            }`}
-          >
-            <ChevronRight className="w-4 h-4" />
-            <span>الصفحة التالية ({currentPage < 604 ? currentPage + 1 : 604})</span>
-          </button>
-
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-stone-200">
-              الصفحة <span className="font-mono text-emerald-400 text-sm">{currentPage}</span> من 604
-            </span>
-          </div>
-
-          <button
-            onClick={goToPrevPage}
-            disabled={currentPage <= 1}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-              currentPage <= 1
-                ? 'opacity-40 cursor-not-allowed bg-stone-900 border-stone-800 text-stone-600'
-                : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-500/40 active:scale-95'
-            }`}
-          >
-            <span>الصفحة السابقة ({currentPage > 1 ? currentPage - 1 : 1})</span>
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* The Mushaf Page Container */}
+        {/* The Mushaf Page Container with Fluid Touch Gestures */}
         <div
-          className={`relative max-w-3xl w-full rounded-2xl shadow-2xl transition-all duration-300 overflow-hidden border ${
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          className={`relative max-w-3xl w-full rounded-2xl shadow-2xl overflow-hidden border touch-pan-y select-none transition-shadow ${
+            isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          } ${
             pageTheme === 'classic'
               ? 'bg-[#fbf8ef] border-[#e2d8bd] shadow-emerald-950/40'
               : pageTheme === 'dark'
@@ -655,10 +826,28 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
               : 'bg-white border-stone-200 shadow-stone-400/20'
           }`}
           style={{
-            transform: `scale(${zoomLevel / 100})`,
+            transform: `scale(${zoomLevel / 100}) translateX(${dragOffset}px)`,
             transformOrigin: 'top center',
+            transition: isDragging
+              ? 'none'
+              : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease',
+            opacity: isDragging ? Math.max(0.7, 1 - Math.abs(dragOffset) / 500) : 1,
           }}
         >
+          {/* Real-time Visual Feedback on Drag / Swipe (Arabic Quran Direction) */}
+          {dragOffset > 25 && (
+            <div className="absolute top-1/2 right-4 -translate-y-1/2 z-30 bg-emerald-600/95 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl border border-emerald-400/50 animate-pulse pointer-events-none flex items-center gap-1.5">
+              <span>الصفحة التالية ({currentPage < 604 ? currentPage + 1 : 604})</span>
+              <span>«</span>
+            </div>
+          )}
+          {dragOffset < -25 && (
+            <div className="absolute top-1/2 left-4 -translate-y-1/2 z-30 bg-emerald-600/95 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl border border-emerald-400/50 animate-pulse pointer-events-none flex items-center gap-1.5">
+              <span>»</span>
+              <span>الصفحة السابقة ({currentPage > 1 ? currentPage - 1 : 1})</span>
+            </div>
+          )}
+
           {/* Header on page: Surah & Juz watermark ribbon */}
           <div
             className={`flex items-center justify-between px-6 py-2 border-b text-xs font-bold font-quran ${
@@ -676,21 +865,24 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
             <span>الجزء {currentJuz}</span>
           </div>
 
-          {/* Loading Overlay */}
+          {/* Subtle Non-Blocking Loading Spinner Indicator */}
           {isLoadingImage && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-stone-950/40 backdrop-blur-xs text-white gap-2">
-              <div className="w-10 h-10 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-              <span className="text-xs font-bold font-quran">جاري استحضار الصفحة {currentPage}...</span>
+            <div className="absolute top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-stone-900/95 text-emerald-400 border border-emerald-500/40 px-4 py-1.5 rounded-full text-xs font-bold shadow-xl animate-pulse">
+              <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+              <span>جاري استحضار الصفحة {currentPage}... ({MUSHAF_SERVERS[activeServerIndex].shortName})</span>
             </div>
           )}
 
           {/* Page Image */}
           <div className="relative min-h-[500px] sm:min-h-[700px] flex items-center justify-center p-2 sm:p-4">
             <img
-              key={`mushaf_page_${currentPage}_${useFallbackServer}`}
+              ref={imgRef}
+              key={`mushaf_page_${currentPage}_server_${activeServerIndex}`}
               src={currentImageUrl}
               alt={`مصحف المدينة المنورة - صفحة ${currentPage}`}
-              className={`max-w-full h-auto object-contain select-none transition-all duration-300 ${
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
+              className={`max-w-full h-auto object-contain select-none pointer-events-none transition-all duration-300 ${
                 pageTheme === 'dark'
                   ? 'invert hue-rotate-180 brightness-90 contrast-125'
                   : 'contrast-105'
@@ -699,14 +891,23 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
                 maxHeight: isFullscreen ? '85vh' : '780px',
               }}
               onLoad={() => {
+                if (watchdogTimerRef.current) {
+                  clearTimeout(watchdogTimerRef.current);
+                }
                 setIsLoadingImage(false);
                 setImageError(false);
               }}
               onError={() => {
-                // If primary CDN fails, switch to QuranFlash server fallback
-                if (!useFallbackServer) {
-                  console.warn(`Primary page image failed for ${currentPage}, trying QuranFlash server`);
-                  setUseFallbackServer(true);
+                if (watchdogTimerRef.current) {
+                  clearTimeout(watchdogTimerRef.current);
+                }
+                console.warn(
+                  `Server ${activeServerIndex} failed for page ${currentPage}. Auto-switching server.`
+                );
+                // Try next server in sequence
+                const nextIdx = (activeServerIndex + 1) % MUSHAF_SERVERS.length;
+                if (nextIdx !== 0) {
+                  advanceToNextServer(true);
                 } else {
                   setIsLoadingImage(false);
                   setImageError(true);
@@ -714,23 +915,35 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
               }}
             />
 
-            {/* Error Message if both CDNs fail */}
+            {/* Error Message if all Servers fail */}
             {imageError && (
-              <div className="p-6 text-center space-y-3 bg-red-950/80 border border-red-800 rounded-2xl max-w-md mx-auto my-12 text-white">
-                <p className="text-sm font-bold">تعذر تحميل صورة الصفحة {currentPage}</p>
-                <p className="text-xs text-stone-300">
-                  يرجى التأكد من اتصال الإنترنت ثم إعادة المحاولة.
-                </p>
-                <button
-                  onClick={() => {
-                    setIsLoadingImage(true);
-                    setImageError(false);
-                    setUseFallbackServer(false);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-xs font-bold cursor-pointer"
-                >
-                  إعادة المحاولة
-                </button>
+              <div className="p-6 text-center space-y-4 bg-stone-900/95 border border-red-500/40 rounded-2xl max-w-md mx-auto my-12 text-white shadow-2xl">
+                <div className="w-12 h-12 rounded-full bg-red-950/80 text-red-400 mx-auto flex items-center justify-center border border-red-500/40">
+                  <RefreshCw className="w-6 h-6 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-base font-bold">تعذر استحضار صفحة المصحف ({currentPage})</p>
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    قد يكون ذلك بسبب بطء الاتصال أو حظر بعض خوادم التوزيع على شبكتك.
+                    يمكنك التبديل إلى خادم آخر، أو تحميل المصحف الشريف كاملاً (PDF).
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <button
+                    onClick={() => advanceToNextServer(true)}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-700/30"
+                  >
+                    <Server className="w-3.5 h-3.5" />
+                    <span>تجربة الخادم التالي ({MUSHAF_SERVERS[(activeServerIndex + 1) % MUSHAF_SERVERS.length].shortName})</span>
+                  </button>
+                  <button
+                    onClick={() => setIsDownloadModalOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-200 border border-stone-700 text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>تحميل المصحف PDF</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -754,27 +967,29 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
         </div>
 
         {/* Fast Page Scrubber Slider */}
-        <div className="w-full max-w-3xl mt-4 px-3 py-2 rounded-2xl bg-stone-900/80 border border-stone-800 space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-stone-400">
-            <span>الفاتحة (1)</span>
-            <span className="font-bold text-emerald-400">
-              شريط التنقل السريع: صفحة {currentPage}
+        <div className="w-full max-w-3xl mt-4 px-4 py-2.5 rounded-2xl bg-stone-900/90 border border-stone-800 space-y-1.5" dir="rtl">
+          <div className="flex items-center justify-between text-xs text-stone-400 font-semibold">
+            <span className="text-emerald-400 font-bold">الفاتحة (1)</span>
+            <span className="text-white bg-stone-950 px-3 py-0.5 rounded-xl border border-stone-800">
+              الصفحة الحالية: <span className="font-mono text-emerald-400 font-black">{currentPage}</span> / 604
             </span>
-            <span>الناس (604)</span>
+            <span className="text-emerald-400 font-bold">الناس (604)</span>
           </div>
           <input
             type="range"
             min="1"
             max="604"
+            dir="rtl"
             value={currentPage}
             onChange={(e) => goToPage(parseInt(e.target.value, 10))}
-            className="w-full accent-emerald-500 cursor-pointer"
+            className="w-full accent-emerald-500 cursor-pointer h-2 bg-stone-950 rounded-lg"
           />
         </div>
 
-        {/* Helpful Keyboard Tip */}
-        <p className="text-[11px] text-stone-500 mt-2 text-center">
-          💡 يمكنك استخدام مفاتيح الأسهم (← و →) في لوحة المفاتيح لتقليب الصفحات يمنة ويسرة بسهولة.
+        {/* Helpful Swipe & Flip Tip */}
+        <p className="text-[11px] text-stone-400 mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
+          <span className="text-emerald-400 font-bold">✨ ترتيب تقليب المصحف الشريف:</span>
+          <span>اسحب لليمين (👉) للمتابعة إلى الصفحة التالية (مثل تكملة سورة الكهف)، واسحب لليسار (👈) للرجوع للصفحة السابقة.</span>
         </p>
 
         {/* Interactive Verses Panel with One-Click Educational Tafsir */}
@@ -911,6 +1126,81 @@ export const MushafPageReader: React.FC<MushafPageReaderProps> = ({
             setEducationalModalVerseText(found?.text);
           }}
         />
+      )}
+
+      {/* Download Holy Quran (PDF) Modal */}
+      {isDownloadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-stone-900 border border-emerald-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-right my-8">
+            <button
+              onClick={() => setIsDownloadModalOpen(false)}
+              className="absolute top-5 left-5 p-2 text-stone-400 hover:text-white rounded-xl bg-stone-800 hover:bg-stone-700 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                <Download className="w-4 h-4" />
+                <span>تحميل المصحف الشريف للقراءة دون اتصال (Offline)</span>
+              </div>
+              <h3 className="text-xl font-bold text-white font-quran">
+                تحميل مصحف المدينة المنورة النبوي (PDF)
+              </h3>
+              <p className="text-xs text-stone-300 leading-relaxed">
+                طبعة مجمع الملك فهد لطباعة المصحف الشريف بالمدينة المنورة برواية حفص عن عاصم، جاهزة للتحميل المباشر بصيغة PDF للقراءة على الهاتف أو الحاسوب أو الطباعة:
+              </p>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              {QURAN_DOWNLOAD_RESOURCES.map((res, rIdx) => (
+                <div
+                  key={rIdx}
+                  className="p-4 rounded-2xl bg-stone-950/80 border border-stone-800 hover:border-emerald-500/50 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white font-quran">{res.title}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-bold">
+                        {res.size}
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-400">{res.description}</p>
+                  </div>
+
+                  <a
+                    href={res.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>تحميل مباشر</span>
+                  </a>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-stone-950 border border-stone-800 text-[11px] text-stone-400 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>نصيحة للتصفح السريع بدون إنترنت:</span>
+              </div>
+              <p>
+                التطبيق يحفظ الصفحات التي تفتحها تلقائياً في ذاكرة الهاتف المؤقتة، كما يمكنك تثبيت التطبيق كتطبيق PWA ليعمل بسلاسة حتى في وضع عدم الاتصال.
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setIsDownloadModalOpen(false)}
+                className="px-5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold cursor-pointer"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

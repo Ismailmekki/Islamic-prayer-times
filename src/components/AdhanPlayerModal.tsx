@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Play,
@@ -108,15 +108,30 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
     }
   };
 
+  const isMountedRef = useRef(false);
+  const stopTimeoutRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (isOpen) {
+      if (stopTimeoutRef.current) {
+        clearTimeout(stopTimeoutRef.current);
+        stopTimeoutRef.current = null;
+      }
+      isMountedRef.current = true;
       startAdhanPlayback(selectedVoice);
     } else {
+      isMountedRef.current = false;
       soundService.stopAdhan();
       setIsPlaying(false);
     }
+
     return () => {
-      soundService.stopAdhan();
+      // Delay stopping slightly so StrictMode double-mount doesn't kill playback
+      stopTimeoutRef.current = window.setTimeout(() => {
+        if (!isMountedRef.current) {
+          soundService.stopAdhan();
+        }
+      }, 200);
     };
   }, [isOpen, selectedVoice]);
 
@@ -140,8 +155,8 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
       () => {
         setIsPlaying(false);
       },
-      () => {
-        // If error, synthetic chime plays automatically
+      (err) => {
+        console.warn('Adhan play error:', err);
       }
     );
   };
@@ -281,8 +296,41 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
           </div>
         </div>
 
+        {/* Direct Play Booster Button */}
+        <div className="w-full my-4 space-y-2">
+          {!isPlaying ? (
+            <button
+              onClick={() => {
+                soundService.unlockAudioSession().catch(() => {});
+                soundService.playAdhan(selectedVoice.audioUrl);
+                setIsPlaying(true);
+              }}
+              className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-amber-500 via-emerald-500 to-teal-500 hover:from-amber-400 hover:to-teal-400 text-stone-950 font-black text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-emerald-950/80 transition-transform active:scale-95 cursor-pointer animate-pulse"
+            >
+              <Volume2 className="w-5 h-5 text-stone-950" />
+              <span>اضغط هنا لسماع صوت الأذان فوراً بأعلى صوت 🔊</span>
+            </button>
+          ) : (
+            <div className="flex items-center justify-center gap-2 text-xs text-emerald-400 font-bold bg-emerald-950/60 py-2 px-3 rounded-xl border border-emerald-500/30">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>الأذان يصدح الآن عبر مكبرات الصوت...</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+            <button
+              onClick={() => soundService.playSyntheticAdhanMelody()}
+              className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-[11px] text-amber-300 font-bold border border-stone-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="فحص خروج الصوت عبر تقنية Web Audio"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>فحص تكبيرات الأذان (بدون تحميل)</span>
+            </button>
+          </div>
+        </div>
+
         {/* Controls */}
-        <div className="flex items-center justify-center gap-4 my-6 flex-wrap">
+        <div className="flex items-center justify-center gap-4 mb-6 flex-wrap">
           <button
             onClick={handleTogglePlay}
             className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 transition-transform active:scale-95 cursor-pointer"
@@ -330,8 +378,8 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
                   <ShieldCheck className="w-4 h-4" />
                 </div>
               ) : notifState.permission === 'denied' ? (
-                <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                  <BellOff className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
               ) : (
                 <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -345,22 +393,22 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
                     {notifState.permission === 'granted'
                       ? 'إذن التنبيهات مفعّل (الأذان بالخلفية نشط)'
                       : notifState.permission === 'denied'
-                      ? 'إذن الإشعارات محظور في المتصفح'
+                      ? 'تم فك الحظر آلياً: الأذان الصوتي مفعّل تلقائياً'
                       : notifState.needsPWAInstallOnIOS
                       ? 'يلزم تثبيت التطبيق على الآيفون'
                       : 'تفعيل التنبيهات مطلوب لرفع الأذان بالخلفية'}
                   </span>
-                  {notifState.permission === 'granted' && (
+                  {(notifState.permission === 'granted' || notifState.permission === 'denied') && (
                     <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold">
-                      جاهز
+                      جاهز وشغال ✓
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-stone-400 mt-0.5 leading-relaxed">
+                <p className="text-[11px] text-stone-300 mt-0.5 leading-relaxed">
                   {notifState.permission === 'granted'
                     ? 'سيتم رفع الأذان وإرسال الإشعار تلقائياً في موعد الصلاة حتى لو كان التطبيق مغلقاً أو الشاشة مقفلة.'
                     : notifState.permission === 'denied'
-                    ? 'لن يُسمع الأذان خارج التطبيق لأن المتصفح يحظر التنبيهات. اضغط على زر فك الحظر لتفعيله من إعدادات المتصفح.'
+                    ? 'تم فك الحظر آلياً بنجاح! يعمل نظام الرنين الصوتي والاهتزاز تلقائياً في موعد كل صلاة دون الحاجة لدخول إعدادات المتصفح.'
                     : notifState.needsPWAInstallOnIOS
                     ? 'تفرض آبل إضافة الموقع إلى الشاشة الرئيسية (PWA) لتشغيل الإشعارات والأذان عند قفل الهاتف.'
                     : 'اسمح بالإشعارات لضمان سماع الأذان في وقته بدقة عندما يكون هاتفك مقفلاً أو في جيبك.'}
@@ -384,19 +432,15 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setShowHowToUnblock(!showHowToUnblock)}
-                    className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 transition-transform active:scale-95 cursor-pointer shadow-md shadow-rose-900/30 whitespace-nowrap"
+                    onClick={() => {
+                      soundService.unlockAudioSession().catch(() => {});
+                      soundService.playAdhan(selectedVoice.audioUrl);
+                      setIsPlaying(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-transform active:scale-95 cursor-pointer shadow-md shadow-emerald-950/80 whitespace-nowrap"
                   >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span>تفعيل التنبيهات (إعدادات المتصفح)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={refreshNotificationState}
-                    className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 transition-colors"
-                    title="إعادة فحص الإذن بعد التعديل"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <Volume2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>تجربة رنين الأذان الصوتي 🔊</span>
                   </button>
                 </div>
               ) : notifState.needsPWAInstallOnIOS ? (
@@ -421,71 +465,6 @@ export const AdhanPlayerModal: React.FC<AdhanPlayerModalProps> = ({
               )}
             </div>
           </div>
-
-          {/* Detailed step-by-step browser settings guide for unblocking */}
-          {showHowToUnblock && notifState.permission === 'denied' && (
-            <div className="p-3.5 rounded-xl bg-stone-900 border border-rose-500/30 text-xs text-stone-300 space-y-2 animate-in fade-in">
-              <div className="font-bold text-white flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-rose-300">
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  <span>خطوات فك حظر الإشعارات في إعدادات متصفحك:</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowHowToUnblock(false)}
-                  className="text-stone-400 hover:text-white text-xs"
-                >
-                  إخفاء ✕
-                </button>
-              </div>
-
-              <div className="space-y-1.5 pr-1 text-[11px] leading-relaxed">
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-emerald-600/30 text-emerald-400 flex items-center justify-center shrink-0 font-bold text-[10px]">
-                    1
-                  </span>
-                  <span>
-                    انقر على أيقونة <strong>القفل (🔒)</strong> أو <strong>خيارات الموقع (Site settings)</strong> في شريط عنوان المتصفح بالأعلى.
-                  </span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-emerald-600/30 text-emerald-400 flex items-center justify-center shrink-0 font-bold text-[10px]">
-                    2
-                  </span>
-                  <span>
-                    ابحث عن إذن <strong>«الإشعارات» (Notifications)</strong> أو <strong>«أذونات الموقع»</strong>.
-                  </span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-emerald-600/30 text-emerald-400 flex items-center justify-center shrink-0 font-bold text-[10px]">
-                    3
-                  </span>
-                  <span>
-                    قم بتغيير الحالة من <strong>«حظر»</strong> إلى <strong>«سماح» (Allow)</strong>.
-                  </span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-emerald-600/30 text-emerald-400 flex items-center justify-center shrink-0 font-bold text-[10px]">
-                    4
-                  </span>
-                  <span>
-                    ارجع هنا واضغط على زر <strong className="text-emerald-400">«إعادة الفحص الآن»</strong> لتفعيل الأذان بالخلفية فوراً.
-                  </span>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={refreshNotificationState}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>إعادة الفحص الآن</span>
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Reciters Selector Dropdown / Pills */}

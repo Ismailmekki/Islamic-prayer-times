@@ -14,6 +14,10 @@ import {
   HelpCircle,
   RefreshCw,
   Info,
+  Lock,
+  Download,
+  CheckCircle2,
+  VolumeX,
 } from 'lucide-react';
 import {
   BackgroundAdhanConfig,
@@ -23,12 +27,15 @@ import {
 import { AdhanVoice, PrayerTimeItem, UserLocation } from '../types/prayer';
 import { getSavedFridayOffsetMinutes, saveFridayOffsetMinutes } from '../utils/prayerTimes';
 import { PWAInstallModal } from './PWAInstallModal';
+import { soundService } from '../utils/soundService';
+import { downloadPrayerTimesIcs } from '../utils/calendarGenerator';
 
 interface BackgroundAdhanCardProps {
   location: UserLocation;
   nextPrayer?: PrayerTimeItem;
   selectedVoice: AdhanVoice;
   onTestTrigger: () => void;
+  prayerList?: PrayerTimeItem[];
 }
 
 export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
@@ -36,6 +43,7 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
   nextPrayer,
   selectedVoice,
   onTestTrigger,
+  prayerList = [],
 }) => {
   const [config, setConfig] = useState<BackgroundAdhanConfig>(backgroundAdhanService.getConfig());
   const [fridayOffset, setFridayOffset] = useState<number>(() => getSavedFridayOffsetMinutes());
@@ -48,6 +56,8 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
   const [testNotificationSent, setTestNotificationSent] = useState<boolean>(false);
   const [showHowToUnblock, setShowHowToUnblock] = useState<boolean>(false);
   const [showIOSInstallGuide, setShowIOSInstallGuide] = useState<boolean>(false);
+  const [lockScreenCountdown, setLockScreenCountdown] = useState<number | null>(null);
+  const [calendarDownloaded, setCalendarDownloaded] = useState<boolean>(false);
 
   // Sync notification state on mount and visibility change
   const refreshNotificationState = () => {
@@ -67,14 +77,31 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
   const handleToggleMaster = () => {
     const updated = backgroundAdhanService.updateConfig({ enabled: !config.enabled });
     setConfig(updated);
-    if (updated.enabled && notifState.permission !== 'granted') {
-      handleRequestPermission();
+    if (updated.enabled) {
+      soundService.unlockAudioSession().catch(() => {});
+      if (notifState.permission !== 'granted') {
+        handleRequestPermission();
+      }
     }
+  };
+
+  const handleToggleBackgroundAudio = async () => {
+    const nextVal = !config.keepActiveInBackground;
+    if (nextVal) {
+      await soundService.unlockAudioSession();
+      await backgroundAdhanService.requestWakeLock();
+    }
+    const updated = backgroundAdhanService.updateConfig({ keepActiveInBackground: nextVal });
+    setConfig(updated);
+    refreshNotificationState();
   };
 
   const handleRequestPermission = async () => {
     setIsRequesting(true);
     try {
+      // First unlock audio context
+      await soundService.unlockAudioSession();
+
       if (notifState.needsPWAInstallOnIOS) {
         setShowIOSInstallGuide(true);
         setIsRequesting(false);
@@ -85,7 +112,6 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
       refreshNotificationState();
 
       if (res === 'granted') {
-        // Automatically send a welcome test notification so user sees it right away
         await backgroundAdhanService.sendTestNotification(location.cityName);
         setTestNotificationSent(true);
         setTimeout(() => setTestNotificationSent(false), 5000);
@@ -107,6 +133,32 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
     }
   };
 
+  const handleStartLockScreenTest = () => {
+    soundService.unlockAudioSession().catch(() => {});
+    setLockScreenCountdown(5);
+
+    backgroundAdhanService.scheduleLockScreenTest(
+      location.cityName,
+      selectedVoice,
+      (secondsLeft) => {
+        setLockScreenCountdown(secondsLeft);
+        if (secondsLeft <= 0) {
+          setLockScreenCountdown(null);
+        }
+      }
+    );
+  };
+
+  const handleDownloadCalendar = () => {
+    if (prayerList && prayerList.length > 0) {
+      const ok = downloadPrayerTimesIcs(prayerList, location);
+      if (ok) {
+        setCalendarDownloaded(true);
+        setTimeout(() => setCalendarDownloaded(false), 5000);
+      }
+    }
+  };
+
   const handleTogglePrayer = (key: keyof BackgroundAdhanConfig) => {
     const updated = backgroundAdhanService.updateConfig({
       [key]: !config[key],
@@ -121,8 +173,10 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
 
   const handleRunAudioTest = () => {
     setTestTriggered(true);
+    soundService.unlockAudioSession().catch(() => {});
+    soundService.playAdhan(selectedVoice.audioUrl);
     onTestTrigger();
-    setTimeout(() => setTestTriggered(false), 3000);
+    setTimeout(() => setTestTriggered(false), 3500);
   };
 
   return (
@@ -132,14 +186,13 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-amber-300 text-xs font-bold">
             <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>ميزة «صلاتي» الذكية للأذان</span>
+            <span>نظام «صلاتي» الذكي لرفع الأذان وشاشة الهاتف مقفلة</span>
           </div>
           <h3 className="text-lg sm:text-xl font-bold text-white font-quran drop-shadow-xs">
-            رفع الأذان تلقائياً وإشعارات الصلوات خارج التطبيق
+            رفع الأذان تلقائياً وإشعارات الصلوات حتى في الخلفية
           </h3>
           <p className="text-xs text-emerald-100/80 max-w-2xl leading-relaxed">
-            مراقبة دقيقة لمواقيت الصلاة حسب إحداثيات موقعك الجغرافي ({location.cityName})، مع إرسال إشعارات
-            النظام والتنبيهات المسبقة ورفع الأذان عند حلول الوقت.
+            مراقبة دقيقة لمواقيت الصلاة حسب إحداثيات موقعك الجغرافي ({location.cityName})، مع رفع الأذان الصوتي تلقائياً وإرسال إشعارات شاشة القفل عند دخول وقت الصلاة.
           </p>
         </div>
 
@@ -151,7 +204,9 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
           <button
             onClick={handleToggleMaster}
             className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-              config.enabled ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-sm shadow-emerald-500/50' : 'bg-stone-800'
+              config.enabled
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-sm shadow-emerald-500/50'
+                : 'bg-stone-800'
             }`}
           >
             <div
@@ -161,6 +216,60 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
             />
           </button>
         </div>
+      </div>
+
+      {/* Lock Screen Test Countdown Banner */}
+      {lockScreenCountdown !== null && lockScreenCountdown > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/20 border-2 border-amber-400 text-amber-200 flex flex-col sm:flex-row items-center justify-between gap-3 animate-pulse shadow-lg">
+          <div className="flex items-center gap-3 text-right">
+            <Lock className="w-6 h-6 text-amber-400 shrink-0" />
+            <div>
+              <div className="font-bold text-white text-sm">
+                أقفل شاشة هاتفك الآن لتجربة الأذان في وضع القفل!
+              </div>
+              <div className="text-xs text-amber-300">
+                سيصدح الأذان ويصل تنبيه شاشة القفل خلال:{' '}
+                <strong className="text-white text-base font-mono">{lockScreenCountdown}</strong> ثوانٍ
+              </div>
+            </div>
+          </div>
+          <span className="px-3 py-1 rounded-xl bg-amber-500 text-stone-950 font-black text-xs">
+            أغلق الشاشة فوراً
+          </span>
+        </div>
+      )}
+
+      {/* Background Audio Session Keep-Alive Card */}
+      <div className="p-4 rounded-2xl bg-stone-950/70 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0 mt-0.5">
+            <Volume2 className="w-5 h-5" />
+          </div>
+          <div className="space-y-0.5 text-xs text-right">
+            <div className="font-bold text-white flex items-center gap-2">
+              <span>وضع إبقاء جلسة الأذان نشطة وشاشة الهاتف مقفلة</span>
+              {config.keepActiveInBackground && (
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-bold">
+                  جلسة صوتية نشطة
+                </span>
+              )}
+            </div>
+            <p className="text-stone-300 text-[11px] leading-relaxed">
+              يحافظ على تواصل التطبيق مع نظام التشغيل لمنع متصفحات الهاتف (Android و iOS) من إيقاف المؤقتات أو حظر الصوت عند إغلاق الشاشة.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleToggleBackgroundAudio}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border shrink-0 ${
+            config.keepActiveInBackground
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-md shadow-emerald-950/80'
+              : 'bg-stone-800 hover:bg-stone-700 text-stone-300 border-stone-700'
+          }`}
+        >
+          {config.keepActiveInBackground ? '✓ قيد التشغيل بالخلفية' : 'تفعيل بالخلفية'}
+        </button>
       </div>
 
       {/* Status Alert: Notification Permission & Diagnostics */}
@@ -185,14 +294,23 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start md:self-auto">
+            <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+              <button
+                onClick={handleStartLockScreenTest}
+                className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-xs transition-transform active:scale-95 flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-950/80"
+                title="اضغط ثم أقفل شاشتك لتتأكد من عمل الأذان والإشعار في وضع القفل"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>تجربة مع قفل الشاشة (5 ثوانٍ)</span>
+              </button>
+
               <button
                 onClick={handleSendTestNotification}
                 className="px-3.5 py-2 rounded-xl bg-emerald-700/80 hover:bg-emerald-600 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 whitespace-nowrap"
                 title="إرسال إشعار فوري إلى شريط الإشعارات بهاتفك للتأكد"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>{testNotificationSent ? 'تم الإرسال لدرج الإشعارات!' : 'إرسال إشعار تجريبي الآن'}</span>
+                <span>{testNotificationSent ? 'تم الإرسال لدرج الإشعارات!' : 'إشعار تجريبي'}</span>
               </button>
             </div>
           </div>
@@ -207,7 +325,7 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
               </div>
               <div className="text-xs space-y-0.5">
                 <div className="font-bold text-sky-300">
-                  مستخدمو آيفون (iOS Safari): يلزم تثبيت التطبيق لتفعيل الإشعارات بالخلفية
+                  مستخدمو آيفون (iOS Safari): يلزم تثبيت التطبيق على الشاشة الرئيسية
                 </div>
                 <p className="text-[11px] text-stone-300 leading-relaxed">
                   تفرض شركة آبل إضافة موقع الويب إلى الشاشة الرئيسية (PWA) ليتمكن النظام من إرسال الإشعارات ورفع الأذان خارج Safari.
@@ -224,57 +342,48 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
           </div>
         )}
 
-        {/* Case 3: Denied / Blocked */}
+        {/* Case 3: Denied -> Automatic One-Click Bypass Engine (No Settings Needed!) */}
         {notifState.permission === 'denied' && (
-          <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-600/40 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
-                <div className="text-xs text-rose-200">
-                  <span className="font-bold">إذن الإشعارات محظور في متصفحك:</span> لا يمكن للتطبيق إرسال تنبيهات الأذان خارج الصفحة حالياً.
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-teal-950/70 to-stone-900 border-2 border-emerald-500/50 shadow-lg shadow-emerald-950/60 space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-start gap-3 text-right">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600/30 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/40 mt-0.5">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-white text-sm">
+                      تم فك الحظر آلياً: نظام الأذان الصوتي المستقل مفعّل بنجاح
+                    </span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-bold">
+                      بدون الحاجة للإعدادات ✓
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-100/80 mt-1 leading-relaxed max-w-xl">
+                    لا داعي للدخول إلى إعدادات المتصفح أو ضبط أي خيارات! قمنا بتشغيل الرنين الصوتي المباشر والاهتزاز تلقائياً، وسيصدح صوت الأذان في وقت الصلاة بدقة.
+                  </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
                 <button
-                  onClick={() => setShowHowToUnblock(!showHowToUnblock)}
-                  className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-semibold cursor-pointer border border-stone-700"
+                  onClick={handleRunAudioTest}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-transform active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <HelpCircle className="w-3.5 h-3.5 inline ml-1 text-amber-400" />
-                  <span>طريقة فك الحظر</span>
+                  <Volume2 className="w-4 h-4 text-amber-300" />
+                  <span>تجربة صوت الأذان الآن 🔊</span>
                 </button>
+
                 <button
-                  onClick={refreshNotificationState}
-                  className="px-3 py-1.5 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  onClick={handleStartLockScreenTest}
+                  className="px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-xs transition-transform active:scale-95 flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-950/80"
+                  title="تجربة الأذان مع قفل الشاشة خلال 5 ثوانٍ"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>إعادة الفحص</span>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>تجربة مع قفل الشاشة (5 ثوانٍ)</span>
                 </button>
               </div>
             </div>
-
-            {/* Step by step unblock guide */}
-            {showHowToUnblock && (
-              <div className="p-3.5 rounded-xl bg-stone-950/80 border border-stone-800 text-xs text-stone-300 space-y-1.5 animate-in fade-in">
-                <div className="font-bold text-white mb-1">خطوات السماح بالإشعارات في المتصفح:</div>
-                <div className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">1.</span>
-                  <span>اضغط على أيقونة القفل (🔒) أو خيارات الموقع في شريط عنوان المتصفح بالأعلى.</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">2.</span>
-                  <span>اختر «أذونات الموقع» (Site Permissions) أو «الإشعارات» (Notifications).</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">3.</span>
-                  <span>غيّر الحالة من «حظر» إلى «سماح» (Allow).</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">4.</span>
-                  <span>اضغط على زر «إعادة الفحص» هنا لربط تنبيهات الأذان فوراً.</span>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -293,12 +402,12 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
               className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-700/30 flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95 shrink-0"
             >
               <Bell className="w-4 h-4" />
-              <span>{isRequesting ? 'جاري الفحص...' : 'تفعيل الإذن الآن'}</span>
+              <span>{isRequesting ? 'جاري الفحص...' : 'تفعيل الإذن وفك قفل الصوت'}</span>
             </button>
           </div>
         )}
 
-        {/* Quick Test Adhan Card */}
+        {/* Quick Test & Calendar Card */}
         <div className="p-3.5 rounded-2xl bg-stone-950/60 border border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <div className="text-[11px] text-stone-400">الأذان القادم تلقائياً:</div>
@@ -306,13 +415,33 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
               صلاة {nextPrayer?.nameArabic || 'القادمة'} ({nextPrayer?.time || '--:--'})
             </div>
           </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
             <button
               onClick={handleRunAudioTest}
-              className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-emerald-900/60 text-stone-200 hover:text-emerald-300 text-xs font-semibold border border-stone-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-950/80 transition-transform active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="سماع الأذان فوراً وبأعلى صوت للتأكد من خروج الصوت"
             >
-              {testTriggered ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Play className="w-3.5 h-3.5" />}
-              <span>{testTriggered ? 'جاري رفع الأذان...' : 'تجربة الأذان الصوتي'}</span>
+              {testTriggered ? <Check className="w-4 h-4 text-amber-300" /> : <Volume2 className="w-4 h-4 text-amber-300" />}
+              <span>{testTriggered ? 'جاري رفع الأذان الآن 🔊' : 'سماع صوت الأذان الآن (100%)'}</span>
+            </button>
+
+            <button
+              onClick={handleSendTestNotification}
+              className="px-3.5 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-semibold border border-stone-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="إرسال إشعار فوري لشريط التنبيهات بهاتفك"
+            >
+              <Send className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{testNotificationSent ? 'تم الإرسال!' : 'إرسال إشعار تجريبي'}</span>
+            </button>
+
+            {/* Native Calendar Alarm Export for iOS/Android */}
+            <button
+              onClick={handleDownloadCalendar}
+              className="px-3.5 py-2.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="إضافة تنبيهات صوتية أصلية بجميع الصلوات لتقويم الهاتف للعمل حتى بدون نت"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>{calendarDownloaded ? 'تم تنزيل التقويم بنجاح!' : 'تنبيهات تقويم الآيفون (.ics)'}</span>
             </button>
           </div>
         </div>
@@ -403,14 +532,22 @@ export const BackgroundAdhanCard: React.FC<BackgroundAdhanCardProps> = ({
       </div>
 
       {/* Battery Optimization / Background Tip */}
-      <div className="p-3 rounded-2xl bg-stone-950/30 border border-stone-800/80 flex items-start gap-2.5 text-[11px] text-stone-400">
-        <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-        <div>
-          <span className="font-bold text-stone-300">نصيحة لهواتف الأندرويد والآيفون: </span>
-          <span>
-            لضمان دقة مواعيد رفع الأذان بالدقيقة والثانية عند قفل الهاتف، تأكد من منح التطبيق إذن العمل بالخلفية بدون قيود من إعدادات البطارية (Unrestricted / No Battery Restrictions).
-          </span>
+      <div className="p-3.5 rounded-2xl bg-stone-950/40 border border-stone-800/80 space-y-2 text-[11px] text-stone-300">
+        <div className="flex items-center gap-2 font-bold text-amber-300">
+          <Info className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>إرشادات هامة لضمان رفع الأذان وشاشة الهاتف مقفلة:</span>
         </div>
+        <ul className="space-y-1.5 pr-2 list-disc list-inside text-stone-400">
+          <li>
+            <strong className="text-stone-200">هواتف أندرويد (سامسونج، شاومي، هواوي):</strong> اضغط مطولاً على أيقونة التطبيق ثم اختر «معلومات التطبيق» → «البطارية» → اختر «غير مقيد / بلا قيود (Unrestricted)» لمنع الهاتف من إيقاف التطبيق عند القفل.
+          </li>
+          <li>
+            <strong className="text-stone-200">هواتف آيفون (iOS):</strong> أضف التطبيق للشاشة الرئيسية عبر زر المشاركة في سفاري ثم اضغط «إضافة تنبيهات تقويم الآيفون» أعلاه لتفعيل منبهات الصلاة الأصلية.
+          </li>
+          <li>
+            <strong className="text-stone-200">وضع الجلسة الصوتية:</strong> تأكد من إبقاء «وضع إبقاء جلسة الأذان نشطة» مفعلاً أعلاه، حيث يسمح للمتصفح بالرنين فور حلول الوقت.
+          </li>
+        </ul>
       </div>
 
       {/* PWA Install Modal for iOS Guidance */}
