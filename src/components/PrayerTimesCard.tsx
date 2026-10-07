@@ -6,18 +6,13 @@ import {
   Sunset,
   Moon,
   Sparkles,
-  Calendar,
   Volume2,
   VolumeX,
-  ChevronLeft,
-  Settings,
-  Bell,
-  CheckCircle2,
-  Compass,
   Play,
-  ShieldCheck,
-  AlertCircle,
-  Radio,
+  CheckCircle2,
+  MapPin,
+  Calendar,
+  Settings,
 } from 'lucide-react';
 import {
   CalculationMethodId,
@@ -25,22 +20,19 @@ import {
   PrayerTimeItem,
   UserLocation,
   AdhanVoice,
+  TimeFormatMode,
 } from '../types/prayer';
 import {
   CalculatedTimes,
-  CALCULATION_METHODS,
   calculateDailyPrayerTimes,
-  formatTimeArabic,
-  formatTime24h,
+  formatPrayerTime,
+  getSavedTimeFormat,
+  saveTimeFormat,
   getCountdownToNextPrayer,
   getHijriDate,
   getPrayerList,
 } from '../utils/prayerTimes';
-import { BackgroundAdhanCard } from './BackgroundAdhanCard';
-import {
-  backgroundAdhanService,
-  NotificationStateInfo,
-} from '../services/backgroundAdhanService';
+import { backgroundAdhanService } from '../services/backgroundAdhanService';
 import { soundService } from '../utils/soundService';
 
 interface PrayerTimesCardProps {
@@ -49,6 +41,8 @@ interface PrayerTimesCardProps {
   selectedVoice: AdhanVoice;
   onOpenSettings: () => void;
   onPlayAdhanForPrayer: (prayerName: string) => void;
+  timeFormatMode?: TimeFormatMode;
+  onToggleTimeFormat?: (mode: TimeFormatMode) => void;
 }
 
 export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
@@ -57,84 +51,20 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
   selectedVoice,
   onOpenSettings,
   onPlayAdhanForPrayer,
+  timeFormatMode,
+  onToggleTimeFormat,
 }) => {
   const [now, setNow] = useState<Date>(new Date());
-  const [showMonthlyModal, setShowMonthlyModal] = useState(false);
-  const [notifState, setNotifState] = useState<NotificationStateInfo>(() =>
-    backgroundAdhanService.getNotificationState()
-  );
-  const [isActivatingAdhan, setIsActivatingAdhan] = useState(false);
-  const [testAudioPlaying, setTestAudioPlaying] = useState(false);
+  const [localTimeFormat, setLocalTimeFormat] = useState<TimeFormatMode>(() => getSavedTimeFormat());
+  const activeTimeFormat = timeFormatMode || localTimeFormat;
 
-  const [mutedPrayers, setMutedPrayers] = useState<Record<PrayerName, boolean>>(() => {
-    const config = backgroundAdhanService.getConfig();
-    const r = config.prayerReminders;
-    return {
-      fajr: !r.fajr.enabled,
-      sunrise: !r.sunrise.enabled,
-      duha: !r.duha.enabled,
-      dhuhr: !r.dhuhr.enabled,
-      jumuah: !r.jumuah.enabled,
-      asr: !r.asr.enabled,
-      maghrib: !r.maghrib.enabled,
-      isha: !r.isha.enabled,
-      qiyam: !r.qiyam.enabled,
-    };
+  const [isAdhanEnabled, setIsAdhanEnabled] = useState<boolean>(() => {
+    return backgroundAdhanService.getConfig().enabled;
   });
 
-  const refreshNotificationState = () => {
-    setNotifState(backgroundAdhanService.getNotificationState());
-  };
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    refreshNotificationState();
-    window.addEventListener('focus', refreshNotificationState);
-    document.addEventListener('visibilitychange', refreshNotificationState);
-    return () => {
-      window.removeEventListener('focus', refreshNotificationState);
-      document.removeEventListener('visibilitychange', refreshNotificationState);
-    };
-  }, []);
-
-  const handleEnableAdhan = async () => {
-    setIsActivatingAdhan(true);
-    try {
-      // 1. Prime master audio session immediately during this user click
-      await soundService.unlockAudioSession();
-
-      // 2. Request browser system notification permission
-      const perm = await backgroundAdhanService.requestNotificationPermission();
-
-      // 3. Play immediate audible confirmation Takbeer ("الله أكبر")
-      soundService.playTakbeerConfirmation();
-
-      // 4. Update configuration to enabled
-      backgroundAdhanService.updateConfig({
-        enabled: true,
-        notifyWithFullAudio: true,
-        keepActiveInBackground: true,
-      });
-
-      // 5. Send test notification to lock screen
-      if (perm === 'granted') {
-        await backgroundAdhanService.sendTestNotification(location.cityName);
-      }
-
-      refreshNotificationState();
-    } finally {
-      setIsActivatingAdhan(false);
-    }
-  };
-
-  const handleTestAdhanSound = () => {
-    setTestAudioPlaying(true);
-    soundService.unlockAudioSession().catch(() => {});
-    soundService.playAdhan(selectedVoice.audioUrl);
-    onPlayAdhanForPrayer(countdown.targetPrayer.nameArabic);
-    setTimeout(() => setTestAudioPlaying(false), 4000);
-  };
-
-  // Keep live time tick every second
+  // Keep live clock tick every second
   useEffect(() => {
     const timer = setInterval(() => {
       setNow(new Date());
@@ -142,6 +72,47 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  const handleToggleTimeFormat = (mode: TimeFormatMode) => {
+    setLocalTimeFormat(mode);
+    saveTimeFormat(mode);
+    if (onToggleTimeFormat) {
+      onToggleTimeFormat(mode);
+    }
+  };
+
+  // Toggle master Adhan switch (One-touch simple experience)
+  const handleToggleAdhan = async () => {
+    const nextState = !isAdhanEnabled;
+    setIsAdhanEnabled(nextState);
+
+    // Update background service config
+    backgroundAdhanService.updateConfig({
+      enabled: nextState,
+      notifyWithFullAudio: true,
+      keepActiveInBackground: true,
+    });
+
+    if (nextState) {
+      // Prime audio session immediately on click
+      await soundService.unlockAudioSession().catch(() => {});
+      // Request browser notification permission gently
+      await backgroundAdhanService.requestNotificationPermission().catch(() => {});
+
+      setToastMessage(`✓ تم تفعيل الأذان التلقائي لمدينة ${location.cityName}`);
+    } else {
+      soundService.stopAdhan();
+      setToastMessage('تم إيقاف الأذان التلقائي');
+    }
+
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleListenAdhanNow = () => {
+    soundService.unlockAudioSession().catch(() => {});
+    onPlayAdhanForPrayer(countdown.targetPrayer.nameArabic);
+  };
+
+  // Calculate prayer times
   const times: CalculatedTimes = calculateDailyPrayerTimes(
     now,
     location.latitude,
@@ -152,17 +123,12 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
     location.timezone
   );
 
-  const prayerList = getPrayerList(times, now);
+  const prayerList = getPrayerList(times, now, activeTimeFormat);
   const countdown = getCountdownToNextPrayer(prayerList, times, now);
   const hijriFallback = getHijriDate(now);
 
-  // Accurate Hijri calendar formatting using 'islamic-umalqura'
-  let hijriUmmAlQuraFormatted = '';
-  let hijriDayNumber = '';
-  let hijriMonthName = '';
-  let hijriYearNumber = '';
-  let hijriWeekday = '';
-
+  // Format Hijri date clearly
+  let hijriDateString = '';
   try {
     const hijriFormatter = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
       day: 'numeric',
@@ -170,523 +136,222 @@ export const PrayerTimesCard: React.FC<PrayerTimesCardProps> = ({
       year: 'numeric',
       weekday: 'long',
     });
-    hijriUmmAlQuraFormatted = hijriFormatter.format(now);
-
-    const parts = hijriFormatter.formatToParts(now);
-    hijriDayNumber = parts.find((p) => p.type === 'day')?.value || '';
-    hijriMonthName = parts.find((p) => p.type === 'month')?.value || '';
-    hijriYearNumber = parts.find((p) => p.type === 'year')?.value || '';
-    hijriWeekday = parts.find((p) => p.type === 'weekday')?.value || '';
+    hijriDateString = hijriFormatter.format(now);
   } catch {
-    hijriUmmAlQuraFormatted = `${hijriFallback.dayNameArabic}، ${hijriFallback.day} ${hijriFallback.monthNameArabic} ${hijriFallback.year} هـ`;
-    hijriDayNumber = hijriFallback.day.toString();
-    hijriMonthName = hijriFallback.monthNameArabic;
-    hijriYearNumber = hijriFallback.year.toString();
-    hijriWeekday = hijriFallback.dayNameArabic;
+    hijriDateString = `${hijriFallback.dayNameArabic}، ${hijriFallback.day} ${hijriFallback.monthNameArabic} ${hijriFallback.year} هـ`;
   }
 
-  // Accurate Gregorian date formatting alongside Hijri
-  let gregorianFormatted = '';
-  try {
-    const gregorianFormatter = new Intl.DateTimeFormat('ar-SA', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      weekday: 'long',
-    });
-    gregorianFormatted = gregorianFormatter.format(now);
-  } catch {
-    gregorianFormatted = `${hijriFallback.dayNameArabic}، ${hijriFallback.gregorianDateFormatted} م`;
-  }
-
-  const toggleMute = (id: PrayerName) => {
-    const isCurrentlyMuted = !!mutedPrayers[id];
-    const newMuted = !isCurrentlyMuted;
-    setMutedPrayers((prev) => ({
-      ...prev,
-      [id]: newMuted,
-    }));
-    backgroundAdhanService.updatePrayerReminder(id as any, {
-      enabled: !newMuted,
-    });
-    if (!newMuted) {
-      soundService.unlockAudioSession().catch(() => {});
-      soundService.playTasbeehClick();
-    }
+  // Format countdown in clear, easy Arabic for elderly
+  const getSimpleCountdownText = () => {
+    const h = countdown.hours;
+    const m = countdown.minutes;
+    if (h === 0 && m === 0) return 'حان الآن موعد الأذان';
+    if (h === 0) return `متبقي ${m} دقيقة على الأذان`;
+    if (m === 0) return `متبقي ${h} ساعة على الأذان`;
+    return `متبقي ${h} ساعة و ${m} دقيقة`;
   };
 
   const getPrayerIcon = (id: PrayerName) => {
     switch (id) {
       case 'fajr':
-        return <Sunrise className="w-5 h-5 text-indigo-300" />;
+        return <Sunrise className="w-6 h-6 text-indigo-300" />;
       case 'sunrise':
-        return <Sun className="w-5 h-5 text-amber-300" />;
-      case 'duha':
-        return <Sparkles className="w-5 h-5 text-amber-300" />;
-      case 'jumuah':
-        return <Compass className="w-5 h-5 text-emerald-400" />;
+        return <Sun className="w-6 h-6 text-amber-300" />;
       case 'dhuhr':
-        return <Sun className="w-5 h-5 text-amber-400" />;
+        return <Sun className="w-6 h-6 text-amber-400" />;
       case 'asr':
-        return <Sun className="w-5 h-5 text-orange-400" />;
+        return <Sun className="w-6 h-6 text-orange-400" />;
       case 'maghrib':
-        return <Sunset className="w-5 h-5 text-rose-400" />;
+        return <Sunset className="w-6 h-6 text-rose-400" />;
       case 'isha':
       default:
-        return <Moon className="w-5 h-5 text-emerald-300" />;
+        return <Moon className="w-6 h-6 text-emerald-300" />;
     }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Hijri Calendar Display with islamic-umalqura alongside Gregorian date */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900 to-emerald-950/70 border border-emerald-500/30 p-5 sm:p-6 shadow-lg shadow-black/30">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-          {/* Main Hijri & Gregorian Text lockup */}
-          <div className="flex items-center gap-4">
-            {/* Visual Hijri Calendar Emblem */}
-            <div className="flex flex-col items-center justify-center w-16 h-18 sm:w-20 sm:h-22 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-center shadow-inner shrink-0 p-1">
-              <span className="text-[10px] sm:text-xs font-bold text-emerald-400 font-sans">
-                {hijriMonthName}
-              </span>
-              <span className="text-2xl sm:text-3xl font-extrabold text-white font-quran tabular-nums leading-tight">
-                {hijriDayNumber}
-              </span>
-              <span className="text-[10px] text-amber-300 font-medium font-sans">
-                {hijriYearNumber} هـ
-              </span>
-            </div>
+    <div dir="rtl" className="space-y-5 text-right font-sans">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="p-3.5 rounded-2xl bg-emerald-600 text-white font-bold text-center text-sm shadow-xl animate-in fade-in duration-300">
+          {toastMessage}
+        </div>
+      )}
 
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-500/30 flex items-center gap-1.5 shadow-xs">
-                  <Moon className="w-3 h-3 text-amber-400" />
-                  <span>التقويم الهجري (تقويم أم القرى المبارك)</span>
-                </span>
-                <button
-                  onClick={onOpenSettings}
-                  className="text-xs text-emerald-300 hover:text-white bg-emerald-950/70 hover:bg-emerald-900/90 px-2.5 py-0.5 rounded-lg border border-emerald-500/40 flex items-center gap-1.5 cursor-pointer transition-colors"
-                  title="تغيير المدينة وضبط التوقيت المحلي"
-                >
-                  <span>📍 {location.cityName} ({location.countryName})</span>
-                  <span className="text-[10px] text-amber-300 font-bold underline">تغيير</span>
-                </button>
-              </div>
-
-              {/* Big Hijri Date Headline */}
-              <h3 className="text-xl sm:text-2xl font-bold bg-gradient-to-l from-amber-200 via-emerald-100 to-white bg-clip-text text-transparent font-quran tracking-wide drop-shadow-xs">
-                {hijriUmmAlQuraFormatted} هـ
-              </h3>
-
-              {/* Gregorian Date alongside it */}
-              <div className="flex items-center gap-2 text-xs sm:text-sm text-stone-300">
-                <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>الموافق ميلادياً:</span>
-                <strong className="text-amber-300 font-semibold">{gregorianFormatted} م</strong>
-              </div>
-            </div>
+      {/* Top Location & Date Bar */}
+      <div className="rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900 to-[#071917] border border-emerald-500/30 p-4 sm:p-5 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* City Information */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0 shadow-inner">
+            <MapPin className="w-6 h-6" />
           </div>
-
-          {/* Quick Action buttons */}
-          <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
-            <button
-              onClick={() => setShowMonthlyModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-[#09221f] hover:bg-[#0d2f2b] text-emerald-200 text-xs font-semibold border border-emerald-500/30 hover:border-emerald-400/60 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Calendar className="w-3.5 h-3.5 text-amber-400" />
-              <span>جدول الشهر الكامل</span>
-            </button>
-            <button
-              onClick={onOpenSettings}
-              className="px-3 py-2 rounded-xl bg-[#09221f] hover:bg-[#0d2f2b] text-stone-200 hover:text-white border border-emerald-500/30 hover:border-emerald-400/60 transition-all flex items-center gap-1.5 text-xs font-semibold shadow-xs cursor-pointer"
-              title="تحديد المدينة وطريقة الحساب"
-            >
-              <Settings className="w-4 h-4 text-emerald-400" />
-              <span>تغيير المدينة ({location.cityName})</span>
-            </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl sm:text-2xl font-black text-white font-quran">
+                {location.cityName}
+              </span>
+              <span className="text-xs text-stone-400 font-medium">({location.countryName})</span>
+            </div>
+            <p className="text-xs text-amber-300 font-medium mt-0.5">
+              {hijriDateString} هـ
+            </p>
           </div>
         </div>
+
+        {/* Change City Button (Big and Senior-Friendly) */}
+        <button
+          onClick={onOpenSettings}
+          className="self-start sm:self-auto px-4 py-2.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer transition-colors shadow-xs"
+        >
+          <Settings className="w-4 h-4 text-emerald-400" />
+          <span>تغيير المدينة 🏙</span>
+        </button>
       </div>
 
-      {/* Adhan & Notification Activation / Synchronization Banner */}
-      <div
-        className={`p-4 sm:p-5 rounded-3xl border transition-all shadow-xl ${
-          notifState.permission === 'granted'
-            ? 'bg-gradient-to-r from-emerald-950/80 via-[#071917] to-stone-950 border-emerald-500/40 shadow-emerald-950/30'
-            : 'bg-gradient-to-r from-amber-950/90 via-[#181106] to-stone-950 border-amber-500/50 shadow-amber-950/40'
-        }`}
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3 text-right">
-            <div
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
-                notifState.permission === 'granted'
-                  ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40'
-                  : 'bg-amber-500/20 text-amber-300 border-amber-400/50 animate-pulse'
-              }`}
-            >
-              {notifState.permission === 'granted' ? (
-                <ShieldCheck className="w-6 h-6" />
-              ) : (
-                <Volume2 className="w-6 h-6" />
-              )}
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h4 className="font-bold text-sm sm:text-base text-white">
-                  {notifState.permission === 'granted'
-                    ? `✓ الأذان التلقائي وتنبيهات الصلوات مفعّلة لمدينة ${location.cityName}`
-                    : '🔔 تنبيه: رفع الأذان تلقائياً وإشعارات الصلوات بحاجة لتفعيل'}
-                </h4>
-                {notifState.permission === 'granted' ? (
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-500/40 font-bold">
-                    نشط بالتوقيت المحلي
-                  </span>
-                ) : (
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full border border-amber-500/40 font-bold">
-                    مطلوب تفعيل الصوت والإذن
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
-                {notifState.permission === 'granted'
-                  ? `يصدح الأذان تلقائياً بصوت ندي في موعد كل صلاة حسب توقيت مدينة ${location.cityName} حتى لو كان الهاتف مقفلاً أو في الخلفية.`
-                  : 'ليصدح صوت الأذان في موعد كل صلاة بدقة وتصلك تنبيهات شاشة القفل حسب توقيت مدينتك، اضغط على زر التفعيل أدناه.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0 flex-wrap">
-            {notifState.permission !== 'granted' ? (
-              <button
-                onClick={handleEnableAdhan}
-                disabled={isActivatingAdhan}
-                className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-stone-950 font-black text-xs sm:text-sm shadow-lg shadow-emerald-500/30 active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
-              >
-                <Bell className="w-4 h-4" />
-                <span>{isActivatingAdhan ? 'جاري التفعيل...' : 'تفعيل الأذان والتنبيهات الآن'}</span>
-              </button>
-            ) : null}
-
-            <button
-              onClick={handleTestAdhanSound}
-              disabled={testAudioPlaying}
-              className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="سماع تجربة الأذان فوراً للتأكد من الصوت"
-            >
-              <Play className="w-3.5 h-3.5 text-amber-400" />
-              <span>{testAudioPlaying ? 'جاري رفع الأذان...' : 'تجربة صوت الأذان (فوري)'}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Hero: Next Prayer Countdown Card */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0c2a26] via-[#081a17] to-[#040e0d] border border-emerald-400/40 p-6 sm:p-8 shadow-2xl shadow-emerald-950/80">
-        {/* Subtle decorative background pattern */}
-        <div className="absolute -top-16 -left-16 w-64 h-64 rounded-full bg-emerald-500/15 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-16 -right-16 w-64 h-64 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          {/* Left / Primary: Next prayer detail */}
+      {/* Next Prayer Hero Card (Clear, Large, Spiritual) */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#07241e] via-[#051a16] to-stone-950 border-2 border-emerald-500/40 p-6 sm:p-8 shadow-2xl shadow-emerald-950/80 text-center sm:text-right">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               <span>الصلاة القادمة</span>
             </div>
-            <div className="flex items-baseline gap-3">
-              <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-white font-quran drop-shadow-sm">
-                صلاة {countdown.targetPrayer.nameArabic}
-              </h2>
-              <span className="text-xl sm:text-3xl font-extrabold text-emerald-300 tabular-nums drop-shadow-sm">
-                {countdown.targetPrayer.time}
-              </span>
+
+            <h2 className="text-4xl sm:text-5xl font-black text-white font-quran">
+              صلاة {countdown.targetPrayer.nameArabic}
+            </h2>
+
+            <div className="text-2xl sm:text-3xl font-extrabold text-amber-300 font-mono tracking-wide">
+              {getSimpleCountdownText()}
             </div>
-            <p className="text-xs sm:text-sm text-emerald-100/80">
-              الوقت المتبقي لرفع الأذان في {location.cityName}:
+
+            <p className="text-xs sm:text-sm text-stone-300">
+              موعد الأذان حسب التوقيت المحلي لمدينة {location.cityName}:{' '}
+              <strong className="text-white text-base sm:text-lg">{countdown.targetPrayer.time}</strong>
             </p>
           </div>
 
-          {/* Right: Big Countdown Ticker */}
-          <div className="flex items-center gap-3">
-            <div className="flex flex-col items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-[#030d0b]/90 border border-emerald-400/30 shadow-inner ring-1 ring-emerald-500/20">
-              <span className="text-2xl sm:text-4xl font-extrabold text-white tabular-nums drop-shadow-sm">
-                {countdown.hours.toString().padStart(2, '0')}
+          {/* Simple Direct Controls for Elderly */}
+          <div className="flex flex-col sm:items-end gap-3 w-full sm:w-auto">
+            {/* Master Adhan Switch */}
+            <button
+              onClick={handleToggleAdhan}
+              className={`w-full sm:w-auto px-6 py-4 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-3 transition-transform active:scale-95 cursor-pointer shadow-xl ${
+                isAdhanEnabled
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-emerald-950/80 ring-2 ring-emerald-400/40'
+                  : 'bg-stone-800 text-stone-300 hover:bg-stone-700 border border-stone-700'
+              }`}
+            >
+              <Volume2 className="w-6 h-6 text-amber-300" />
+              <span>
+                {isAdhanEnabled
+                  ? 'الأذان مفعّل تلقائياً لجميع الصلوات 🟢'
+                  : 'الأذان متوقف - اضغط للتشغيل ⚪'}
               </span>
-              <span className="text-[10px] sm:text-xs text-stone-300 font-medium">ساعة</span>
-            </div>
-            <span className="text-2xl font-bold text-emerald-400">:</span>
-            <div className="flex flex-col items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-[#030d0b]/90 border border-emerald-400/30 shadow-inner ring-1 ring-emerald-500/20">
-              <span className="text-2xl sm:text-4xl font-extrabold text-emerald-300 tabular-nums drop-shadow-sm">
-                {countdown.minutes.toString().padStart(2, '0')}
-              </span>
-              <span className="text-[10px] sm:text-xs text-stone-300 font-medium">دقيقة</span>
-            </div>
-            <span className="text-2xl font-bold text-amber-400">:</span>
-            <div className="flex flex-col items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-[#030d0b]/90 border border-emerald-400/30 shadow-inner ring-1 ring-emerald-500/20">
-              <span className="text-2xl sm:text-4xl font-extrabold text-amber-300 tabular-nums drop-shadow-sm">
-                {countdown.seconds.toString().padStart(2, '0')}
-              </span>
-              <span className="text-[10px] sm:text-xs text-stone-300 font-medium">ثانية</span>
-            </div>
-          </div>
-        </div>
+            </button>
 
-        {/* Progress Bar of prayer interval */}
-        <div className="mt-6 pt-4 border-t border-emerald-900/40">
-          <div className="flex items-center justify-between text-xs text-stone-300 mb-1.5">
-            <span>انقضاء وقت الانتظار</span>
-            <span className="tabular-nums font-bold text-amber-300">{countdown.percentageElapsed}%</span>
-          </div>
-          <div className="w-full h-2 rounded-full bg-[#030e0c] overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-l from-amber-400 via-emerald-400 to-teal-500 rounded-full transition-all duration-1000 shadow-sm shadow-emerald-400/50"
-              style={{ width: `${countdown.percentageElapsed}%` }}
-            />
+            {/* Listen Adhan Now Button */}
+            <button
+              onClick={handleListenAdhanNow}
+              className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-stone-900/90 hover:bg-stone-800 text-emerald-300 border border-emerald-500/40 text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-md"
+            >
+              <Play className="w-4 h-4 fill-emerald-300 text-emerald-300" />
+              <span>استماع لصوت الأذان الآن ({selectedVoice.titleArabic}) 🔊</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Feature Card: Background Full Adhan Playback */}
-      <BackgroundAdhanCard
-        location={location}
-        nextPrayer={countdown.targetPrayer}
-        selectedVoice={selectedVoice}
-        onTestTrigger={() => onPlayAdhanForPrayer(countdown.targetPrayer.nameArabic)}
-        prayerList={prayerList}
-      />
+      {/* Five Daily Prayer Times Table (Large, High Contrast, Senior-Friendly) */}
+      <div className="rounded-3xl bg-stone-900/90 border border-stone-800 p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+          <div className="flex items-center gap-2 font-bold text-white text-base sm:text-lg font-quran">
+            <Clock className="w-5 h-5 text-emerald-400" />
+            <span>مواقيت الصلاة اليوم لمدينة {location.cityName}</span>
+          </div>
 
-      {/* Prayer Grid (The 5 daily prayers + Sunrise) */}
-      <div>
-        <div className="flex items-center justify-between mb-3 px-1">
-          <h3 className="text-base font-bold text-white flex items-center gap-2">
-            <Clock className="w-4 h-4 text-emerald-400" />
-            <span>مواقيت اليوم</span>
-          </h3>
-          <span className="text-xs text-stone-400">
-            الوقت الحالي: <strong className="text-emerald-400 tabular-nums">{formatTimeArabic(now, true)}</strong>
-          </span>
+          {/* Simple 12h / 24h Toggle */}
+          <div className="flex items-center gap-1 bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs">
+            <button
+              onClick={() => handleToggleTimeFormat('12h')}
+              className={`px-3 py-1 rounded-lg font-bold cursor-pointer transition-colors ${
+                activeTimeFormat === '12h'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              صباحاً / مساءً
+            </button>
+            <button
+              onClick={() => handleToggleTimeFormat('24h')}
+              className={`px-3 py-1 rounded-lg font-bold cursor-pointer transition-colors ${
+                activeTimeFormat === '24h'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              24 ساعة
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3">
-          {prayerList.map((item) => {
-            const isMuted = mutedPrayers[item.id];
+        {/* The Prayer Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {prayerList.map((prayer) => {
+            const isNext = prayer.id === countdown.targetPrayer.id;
+
             return (
               <div
-                key={item.id}
-                className={`relative flex flex-col justify-between p-4 rounded-2xl border transition-all ${
-                  item.isNext
-                    ? 'bg-gradient-to-b from-[#0f3d35] via-[#092520] to-[#041210] border-emerald-400/90 shadow-2xl shadow-emerald-950/80 scale-[1.03] ring-1 ring-emerald-400/40'
-                    : item.isCurrent
-                    ? 'bg-gradient-to-b from-[#1a2d18] via-[#0d1e12] to-[#050f08] border-amber-400/60 shadow-xl'
-                    : 'bg-[#071a18]/85 border-emerald-500/20 hover:border-emerald-400/40 hover:bg-[#0b2622]/90 shadow-sm'
+                key={prayer.id}
+                className={`p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                  isNext
+                    ? 'bg-gradient-to-r from-emerald-950/90 via-[#07241e] to-stone-950 border-2 border-emerald-400 shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-400/30'
+                    : 'bg-stone-950/70 border-stone-800/80 hover:bg-stone-900/60'
                 }`}
               >
-                {/* Status Indicator */}
-                <div className="flex items-center justify-between mb-3">
-                  <div className={`p-2 rounded-xl border ${item.isNext ? 'bg-[#030e0c] border-emerald-400/50 text-emerald-300' : 'bg-[#030e0c] border-emerald-500/25 text-emerald-400'}`}>
-                    {getPrayerIcon(item.id)}
-                  </div>
-                  {item.isPrayer && (
-                    <button
-                      onClick={() => toggleMute(item.id)}
-                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                        isMuted
-                          ? 'text-stone-500 hover:text-stone-300'
-                          : 'text-amber-300 hover:text-amber-200 bg-amber-950/50 border border-amber-500/30'
-                      }`}
-                      title={isMuted ? 'تفعيل تنبيه الأذان' : 'كتم تنبيه الأذان'}
-                    >
-                      {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
-                </div>
-
-                {/* Name & Time */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-base text-white">{item.nameArabic}</span>
-                    {item.isNext && (
-                      <span className="text-[10px] text-amber-200 font-bold bg-amber-950/90 px-2 py-0.5 rounded-md border border-amber-500/40 shadow-xs">
-                        القادمة
-                      </span>
-                    )}
-                    {item.isCurrent && !item.isNext && (
-                      <span className="text-[10px] text-emerald-300 font-bold bg-emerald-950/90 px-2 py-0.5 rounded-md border border-emerald-500/40 shadow-xs">
-                        الآن
-                      </span>
-                    )}
-                  </div>
-                  <div className={`text-lg sm:text-xl font-black tabular-nums tracking-tight ${item.isNext ? 'text-emerald-300 drop-shadow-xs' : 'text-stone-100'}`}>
-                    {item.time}
-                  </div>
-                </div>
-
-                {/* Quick Adhan Preview button */}
-                {item.isPrayer && (
-                  <button
-                    onClick={() => onPlayAdhanForPrayer(item.nameArabic)}
-                    className={`mt-3 w-full py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs ${
-                      item.isNext
-                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold shadow-md shadow-emerald-950'
-                        : 'bg-[#09221f] hover:bg-emerald-900/60 text-stone-200 hover:text-white border border-emerald-500/25'
+                {/* Right: Icon + Prayer Name */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                      isNext
+                        ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                        : 'bg-stone-900 border-stone-800 text-stone-400'
                     }`}
                   >
-                    <Volume2 className="w-3 h-3 text-amber-300" />
-                    <span>سماع الأذان</span>
-                  </button>
-                )}
+                    {getPrayerIcon(prayer.id)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg sm:text-xl font-black text-white font-quran">
+                        {prayer.nameArabic}
+                      </span>
+                      {isNext && (
+                        <span className="text-[10px] bg-emerald-500 text-stone-950 px-2 py-0.5 rounded-full font-black">
+                          القادمة
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-stone-400">
+                      {prayer.id === 'sunrise' ? 'شروق الشمس' : 'أذان الصلاة'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Left: Time in large font */}
+                <div className="text-left font-mono">
+                  <span
+                    className={`text-xl sm:text-2xl font-black tracking-tight ${
+                      isNext ? 'text-amber-300' : 'text-stone-200'
+                    }`}
+                  >
+                    {prayer.time}
+                  </span>
+                </div>
               </div>
             );
           })}
         </div>
       </div>
-
-      {/* Friday Prayer Geographic Schedule Banner */}
-      <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-[#0c2a26] via-[#081b18] to-[#04100e] border border-emerald-500/40 shadow-xl shadow-emerald-950/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 rounded-2xl bg-gradient-to-br from-emerald-500/30 via-emerald-800/40 to-amber-500/20 text-amber-300 border border-emerald-400/40 shadow-md shrink-0">
-            <Compass className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm sm:text-base font-bold text-white">
-                صلاة الجمعة المباركة في {location.cityName} ({location.countryName})
-              </h4>
-              {now.getDay() === 5 && (
-                <span className="text-[10px] bg-gradient-to-r from-amber-500 to-amber-600 text-white font-bold px-2 py-0.5 rounded-md animate-pulse shadow-sm">
-                  اليوم صلاة الجمعة
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-stone-300 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-              <span>
-                الأذان الثاني والخطبة:{' '}
-                <strong className="text-emerald-300 font-mono text-sm">{formatTimeArabic(times.jumuah)}</strong>
-              </span>
-              <span>
-                الأذان الأول للتذكير والتبكير:{' '}
-                <strong className="text-amber-200 font-mono">{formatTimeArabic(times.jumuahFirstAdhan)}</strong>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="text-[11px] text-emerald-200 bg-[#061e1b] px-3.5 py-2 rounded-xl border border-emerald-500/30 self-start md:self-auto shrink-0 flex items-center gap-2 shadow-xs">
-          <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-          <span>من سنن الجمعة: الغسل، التبكير، قراءة سورة الكهف، والإكثار من الصلاة على النبي ﷺ</span>
-        </div>
-      </div>
-
-      {/* Extra Islamic times: Qiyam al-layl & Suhoor */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="p-4 rounded-2xl bg-[#071917]/90 border border-indigo-500/25 flex items-center justify-between shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-indigo-950/70 text-indigo-300 border border-indigo-700/40 shadow-inner">
-              <Moon className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white">قيام الليل والثلث الأخير</div>
-              <div className="text-xs text-indigo-200/70">أفضل أوقات استجابة الدعاء والمناجاة</div>
-            </div>
-          </div>
-          <div className="text-lg font-black text-indigo-300 tabular-nums">
-            {formatTimeArabic(times.qiyam)}
-          </div>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[#071917]/90 border border-amber-500/25 flex items-center justify-between shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-amber-950/70 text-amber-300 border border-amber-700/40 shadow-inner">
-              <Sun className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white">شروق الشمس (صلاة الضحى)</div>
-              <div className="text-xs text-amber-200/70">يبدأ وقت صلاة الأوابين بعد الشروق بـ 15 دقيقة</div>
-            </div>
-          </div>
-          <div className="text-lg font-black text-amber-300 tabular-nums">
-            {formatTimeArabic(times.sunrise)}
-          </div>
-        </div>
-      </div>
-
-      {/* Monthly Prayer Calendar Modal */}
-      {showMonthlyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-stone-800 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  جدول مواقيت الصلاة الشهري - {location.cityName}
-                </h3>
-                <p className="text-xs text-stone-400">
-                  حسب تقويم {CALCULATION_METHODS[calculationMethod].nameArabic}
-                </p>
-              </div>
-              <button
-                onClick={() => setShowMonthlyModal(false)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-800 text-stone-300 hover:text-white"
-              >
-                إغلاق
-              </button>
-            </div>
-
-            <div className="overflow-x-auto p-4 flex-1">
-              <table className="w-full text-right text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-stone-800 text-stone-400 font-semibold bg-stone-950/50">
-                    <th className="py-2.5 px-3">اليوم</th>
-                    <th className="py-2.5 px-3">الميلادي</th>
-                    <th className="py-2.5 px-3">الفجر</th>
-                    <th className="py-2.5 px-3">الشروق</th>
-                    <th className="py-2.5 px-3">الظهر</th>
-                    <th className="py-2.5 px-3">العصر</th>
-                    <th className="py-2.5 px-3">المغرب</th>
-                    <th className="py-2.5 px-3">العشاء</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-800/60 font-mono tabular-nums text-stone-200">
-                  {Array.from({ length: 30 }).map((_, i) => {
-                    const rowDate = new Date();
-                    rowDate.setDate(rowDate.getDate() + (i - 2));
-                    const rowTimes = calculateDailyPrayerTimes(
-                      rowDate,
-                      location.latitude,
-                      location.longitude,
-                      calculationMethod
-                    );
-                    const rowHijri = getHijriDate(rowDate);
-                    const isToday = rowDate.toDateString() === now.toDateString();
-
-                    return (
-                      <tr
-                        key={i}
-                        className={`hover:bg-stone-800/50 ${
-                          isToday ? 'bg-emerald-950/50 text-emerald-300 font-bold' : ''
-                        }`}
-                      >
-                        <td className="py-2 px-3 font-sans font-medium">
-                          {rowHijri.dayNameArabic} {rowHijri.day}
-                        </td>
-                        <td className="py-2 px-3 text-stone-400">
-                          {rowDate.getDate()}/{rowDate.getMonth() + 1}
-                        </td>
-                        <td className="py-2 px-3">{formatTime24h(rowTimes.fajr)}</td>
-                        <td className="py-2 px-3 text-amber-400/90">{formatTime24h(rowTimes.sunrise)}</td>
-                        <td className="py-2 px-3">{formatTime24h(rowTimes.dhuhr)}</td>
-                        <td className="py-2 px-3">{formatTime24h(rowTimes.asr)}</td>
-                        <td className="py-2 px-3 text-rose-300">{formatTime24h(rowTimes.maghrib)}</td>
-                        <td className="py-2 px-3">{formatTime24h(rowTimes.isha)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

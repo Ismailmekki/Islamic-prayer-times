@@ -7,7 +7,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'أذان ندي خاشع مخصص لوقت الظهر',
     locationArabic: 'الدوحة / الحرمين الشريفين',
     audioUrl: '/audio/adhan/dhuhr.mp3',
-    durationText: '3:20',
+    durationText: '2:35',
     isFajrSpecific: false,
   },
   {
@@ -16,7 +16,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'أذان ندي خاشع مخصص لوقت العصر',
     locationArabic: 'الدوحة / الحرمين الشريفين',
     audioUrl: '/audio/adhan/asr.mp3',
-    durationText: '3:25',
+    durationText: '2:44',
     isFajrSpecific: false,
   },
   {
@@ -25,16 +25,16 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'الشيخ علي أحمد ملا (شيخ مؤذني الحرم المكي)',
     locationArabic: 'مكة المكرمة',
     audioUrl: '/audio/adhan/makkah.mp3',
-    durationText: '3:45',
+    durationText: '2:58',
     isFajrSpecific: false,
   },
   {
     id: 'madinah_bukhari',
     titleArabic: 'أذان المسجد النبوي الشريف',
-    reciterArabic: 'مؤذنو الحرم النبوي الشريف (تسجيل نقي عالي الجودة)',
+    reciterArabic: 'مؤذنو الحرم النبوي الشريف (تسجيل نقي كامل)',
     locationArabic: 'المدينة المنورة',
     audioUrl: '/audio/adhan/madinah.mp3',
-    durationText: '3:30',
+    durationText: '3:48',
     isFajrSpecific: false,
   },
   {
@@ -43,7 +43,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'الشيخ مشاري بن راشد العفاسي (استوديو ستيريو 128kbps)',
     locationArabic: 'دولة الكويت',
     audioUrl: '/audio/adhan/alafasy.mp3',
-    durationText: '3:20',
+    durationText: '4:17',
     isFajrSpecific: false,
   },
   {
@@ -52,7 +52,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'فضيلة الشيخ عبد الباسط عبد الصمد (رحمه الله)',
     locationArabic: 'مصر',
     audioUrl: '/audio/adhan/abdulbasit.mp3',
-    durationText: '3:15',
+    durationText: '3:58',
     isFajrSpecific: false,
   },
   {
@@ -61,7 +61,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'القارئ الشيخ أحمد النفيس (صوت عذب نقي)',
     locationArabic: 'دولة الكويت',
     audioUrl: '/audio/adhan/nafees.mp3',
-    durationText: '3:35',
+    durationText: '3:33',
     isFajrSpecific: false,
   },
   {
@@ -70,7 +70,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'مؤذنو المسجد الأقصى المبارك',
     locationArabic: 'القدس الشريف',
     audioUrl: '/audio/adhan/alaqsa.mp3',
-    durationText: '3:40',
+    durationText: '1:52',
     isFajrSpecific: false,
   },
   {
@@ -79,7 +79,7 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     reciterArabic: 'الشيخ مشاري راشد العفاسي (مخصوص لصلاة الفجر)',
     locationArabic: 'دولة الكويت',
     audioUrl: '/audio/adhan/fajr.mp3',
-    durationText: '3:50',
+    durationText: '1:55',
     isFajrSpecific: true,
   },
 ];

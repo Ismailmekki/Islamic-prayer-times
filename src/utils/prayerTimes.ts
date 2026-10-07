@@ -1,4 +1,4 @@
-import { CalculationMethod, CalculationMethodId, JuristicMethod, PrayerName, PrayerTimeItem, HijriDateInfo } from '../types/prayer';
+import { CalculationMethod, CalculationMethodId, JuristicMethod, PrayerName, PrayerTimeItem, HijriDateInfo, TimeFormatMode } from '../types/prayer';
 
 export const CALCULATION_METHODS: Record<CalculationMethodId, CalculationMethod> = {
   MAKKAH: {
@@ -428,13 +428,83 @@ export function formatTimeArabic(date: Date, includeSeconds = false): string {
   return `${hours}:${mm} ${period}`;
 }
 
-export function formatTime24h(date: Date): string {
+export function detectSystemHourCycle(): '24h' | '12h' {
+  if (typeof window === 'undefined') return '24h';
+  try {
+    const options = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions();
+    if (options.hour12 === false || options.hourCycle === 'h23' || options.hourCycle === 'h24') {
+      return '24h';
+    }
+    // Test a PM time (13:00) to see if device format prints "13"
+    const pmTest = new Date(2026, 0, 1, 13, 0, 0);
+    const formatted = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(pmTest);
+    if (formatted.includes('13')) {
+      return '24h';
+    }
+    if (options.hour12 === true || options.hourCycle === 'h12' || options.hourCycle === 'h11') {
+      return '12h';
+    }
+  } catch {}
+  return '24h';
+}
+
+export function resolveEffectiveTimeFormat(mode: TimeFormatMode = '24h'): '24h' | '12h' {
+  if (mode === 'auto') {
+    return detectSystemHourCycle();
+  }
+  return mode;
+}
+
+export function getSavedTimeFormat(): TimeFormatMode {
+  try {
+    const val = localStorage.getItem('salati_time_format');
+    if (val === '24h' || val === '12h' || val === 'auto') {
+      return val as TimeFormatMode;
+    }
+  } catch {}
+  // Default to 24-Hour System (الآلي الذكي بنظام 24 ساعة)
+  return '24h';
+}
+
+export function saveTimeFormat(mode: TimeFormatMode): void {
+  try {
+    localStorage.setItem('salati_time_format', mode);
+  } catch {}
+}
+
+export function formatPrayerTime(
+  date: Date,
+  mode: TimeFormatMode = '24h',
+  includeSeconds = false
+): string {
+  const effectiveMode = resolveEffectiveTimeFormat(mode);
+  if (effectiveMode === '24h') {
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    if (includeSeconds) {
+      const seconds = date.getSeconds().toString().padStart(2, '0');
+      return `${hours}:${minutes}:${seconds}`;
+    }
+    return `${hours}:${minutes}`;
+  }
+  return formatTimeArabic(date, includeSeconds);
+}
+
+export function formatTime24h(date: Date, includeSeconds = false): string {
   const hours = date.getHours().toString().padStart(2, '0');
   const minutes = date.getMinutes().toString().padStart(2, '0');
+  if (includeSeconds) {
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+  }
   return `${hours}:${minutes}`;
 }
 
-export function getPrayerList(times: CalculatedTimes, now: Date): PrayerTimeItem[] {
+export function getPrayerList(
+  times: CalculatedTimes,
+  now: Date,
+  timeMode: TimeFormatMode = '24h'
+): PrayerTimeItem[] {
   const nowMs = now.getTime();
   const isFriday = now.getDay() === 5;
 
@@ -484,7 +554,7 @@ export function getPrayerList(times: CalculatedTimes, now: Date): PrayerTimeItem
       id: item.id,
       nameArabic: item.nameArabic,
       nameEnglish: item.nameEnglish,
-      time: formatTimeArabic(item.date),
+      time: formatPrayerTime(item.date, timeMode),
       timestamp: item.date.getTime(),
       isNext,
       isPassed,

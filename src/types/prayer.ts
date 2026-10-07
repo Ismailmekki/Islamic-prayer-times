@@ -79,3 +79,6 @@ export interface HijriDateInfo {
   gregorianDateFormatted: string;
   dayNameArabic: string;
 }
+
+export type TimeFormatMode = '24h' | '12h' | 'auto';
+

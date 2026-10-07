@@ -362,6 +362,7 @@ class BackgroundAdhanService {
       vibrate?: number[];
       actions?: Array<{ action: string; title: string }>;
       renotify?: boolean;
+      sound?: string;
     } = {
       body,
       icon: '/pwa-192x192.png',
@@ -371,12 +372,13 @@ class BackgroundAdhanService {
       silent: false,
       renotify: true,
       vibrate: [600, 300, 600, 300, 1200],
+      sound: '/audio/adhan/makkah.mp3',
       actions: [
-        { action: 'listen_adhan', title: '🔊 استماع للأذان' },
+        { action: 'listen_adhan', title: '🔊 استماع للأذان كاملاً' },
         { action: 'open_app', title: '🕌 فتح صلاتي' },
       ],
       data: {
-        url: '/',
+        url: data.url || `/?adhan=1&prayer=${encodeURIComponent(data.prayerName as string || 'الصلاة')}`,
         ...data,
       },
     };
@@ -541,6 +543,36 @@ class BackgroundAdhanService {
   }
 
   /**
+   * Sync prayer schedule with Service Worker for closed-app Notification Triggers
+   */
+  public async syncWithServiceWorker(prayerList: PrayerTimeItem[], cityName: string): Promise<void> {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && reg.active) {
+        reg.active.postMessage({
+          type: 'SCHEDULE_PRAYER_ALARMS',
+          payload: { prayerList, cityName },
+        });
+      }
+      // Register Periodic Background Sync if supported (Chromium / Android)
+      type PeriodicSyncManager = {
+        register: (tag: string, options: { minInterval: number }) => Promise<void>;
+      };
+      const swWithPeriodic = reg as unknown as { periodicSync?: PeriodicSyncManager };
+      if (swWithPeriodic.periodicSync && typeof swWithPeriodic.periodicSync.register === 'function') {
+        try {
+          await swWithPeriodic.periodicSync.register('prayer-adhan-sync', {
+            minInterval: 15 * 60 * 1000,
+          });
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('Error syncing with Service Worker:', err);
+    }
+  }
+
+  /**
    * Pre-schedule exact setTimeouts for all upcoming prayers.
    * If a prayer has passed today (e.g. at night), it calculates the exact
    * millisecond timestamp for tomorrow so Fajr is NEVER missed!
@@ -557,6 +589,9 @@ class BackgroundAdhanService {
 
     const { prayerList, cityName, selectedVoice } = getUpcomingPrayers();
     const nowMs = Date.now();
+
+    // Sync with Service Worker for closed app alarms
+    this.syncWithServiceWorker(prayerList, cityName).catch(() => {});
 
     prayerList.forEach((prayer) => {
       if (!prayer.isPrayer) return;

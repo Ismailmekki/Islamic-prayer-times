@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { TopNav } from './components/TopNav';
 import { PrayerTimesCard } from './components/PrayerTimesCard';
 import { AdhanSection } from './components/AdhanSection';
@@ -18,9 +18,10 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { CitySelectorModal } from './components/CitySelectorModal';
 import { AdhanPlayerModal } from './components/AdhanPlayerModal';
-import { CalculationMethodId, JuristicMethod, UserLocation, AdhanVoice } from './types/prayer';
+import { MiniAdhanPlayer } from './components/MiniAdhanPlayer';
+import { CalculationMethodId, JuristicMethod, UserLocation, AdhanVoice, TimeFormatMode } from './types/prayer';
 import { ADHAN_VOICES } from './data/adhanSounds';
-import { calculateDailyPrayerTimes, getPrayerList } from './utils/prayerTimes';
+import { calculateDailyPrayerTimes, getPrayerList, getSavedTimeFormat, saveTimeFormat } from './utils/prayerTimes';
 import { COUNTRIES_AND_STATES } from './data/countriesAndStates';
 import { backgroundAdhanService } from './services/backgroundAdhanService';
 import { soundService } from './utils/soundService';
@@ -93,6 +94,14 @@ export default function App() {
   const [calculationMethod, setCalculationMethod] = useState<CalculationMethodId>(() => getInitialLocationAndMethod().method);
   const [juristicMethod, setJuristicMethod] = useState<JuristicMethod>('standard');
 
+  // Time Format Mode (12h vs 24h system)
+  const [timeFormatMode, setTimeFormatMode] = useState<TimeFormatMode>(() => getSavedTimeFormat());
+
+  const handleToggleTimeFormat = (mode: TimeFormatMode) => {
+    setTimeFormatMode(mode);
+    saveTimeFormat(mode);
+  };
+
   // Adhan state
   const [selectedVoice, setSelectedVoice] = useState<AdhanVoice>(ADHAN_VOICES[0]);
   const [isAdhanModalOpen, setIsAdhanModalOpen] = useState(false);
@@ -100,6 +109,21 @@ export default function App() {
 
   // City Selector Modal
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+
+  // Memoized daily prayer list
+  const currentPrayerList = useMemo(() => {
+    const now = new Date();
+    const times = calculateDailyPrayerTimes(
+      now,
+      location.latitude,
+      location.longitude,
+      calculationMethod,
+      juristicMethod,
+      undefined,
+      location.timezone
+    );
+    return getPrayerList(times, now);
+  }, [location, calculationMethod, juristicMethod]);
 
   // Initialize background prayer monitor and trigger listeners
   useEffect(() => {
@@ -133,18 +157,52 @@ export default function App() {
     };
   }, [location, calculationMethod, juristicMethod, selectedVoice]);
 
-  // Unlock audio session on first user gesture to ensure background Adhan triggers reliably
+  // Unlock audio session on user gesture to ensure background Adhan triggers reliably
   useEffect(() => {
     const handleFirstGesture = () => {
-      if (backgroundAdhanService.getConfig().keepActiveInBackground) {
-        soundService.unlockAudioSession().catch(() => {});
-      }
+      soundService.unlockAudioSession().catch(() => {});
     };
     window.addEventListener('pointerdown', handleFirstGesture, { once: true });
+    window.addEventListener('touchstart', handleFirstGesture, { once: true });
+    window.addEventListener('click', handleFirstGesture, { once: true });
     return () => {
       window.removeEventListener('pointerdown', handleFirstGesture);
+      window.removeEventListener('touchstart', handleFirstGesture);
+      window.removeEventListener('click', handleFirstGesture);
     };
   }, []);
+
+  // Listen for lock-screen notification taps and Service Worker triggers
+  useEffect(() => {
+    // 1. If opened with ?adhan=1
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('adhan') === '1') {
+        const pName = params.get('prayer') || 'الصلاة';
+        soundService.unlockAudioSession().catch(() => {});
+        soundService.playAdhan(selectedVoice.audioUrl, { prayerName: pName });
+        setActiveAdhanPrayerName(pName);
+        setIsAdhanModalOpen(true);
+      }
+    }
+
+    // 2. If Service Worker posts SALATI_TRIGGER_ADHAN message
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      const handleSwMessage = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'SALATI_TRIGGER_ADHAN') {
+          const pName = event.data.prayerName || 'الصلاة';
+          soundService.unlockAudioSession().catch(() => {});
+          soundService.playAdhan(selectedVoice.audioUrl, { prayerName: pName });
+          setActiveAdhanPrayerName(pName);
+          setIsAdhanModalOpen(true);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      };
+    }
+  }, [selectedVoice]);
 
   // Save location updates to localStorage
   useEffect(() => {
@@ -272,6 +330,8 @@ export default function App() {
             selectedVoice={selectedVoice}
             onOpenSettings={() => setIsLocationModalOpen(true)}
             onPlayAdhanForPrayer={(prayerName) => handleTriggerAdhan(prayerName)}
+            timeFormatMode={timeFormatMode}
+            onToggleTimeFormat={handleToggleTimeFormat}
           />
         )}
 
@@ -370,6 +430,8 @@ export default function App() {
         onSelectMethod={(m) => setCalculationMethod(m)}
         currentJuristic={juristicMethod}
         onSelectJuristic={(j) => setJuristicMethod(j)}
+        timeFormatMode={timeFormatMode}
+        onToggleTimeFormat={handleToggleTimeFormat}
       />
 
       {/* Adhan Visual Player Modal */}
@@ -379,6 +441,12 @@ export default function App() {
         prayerName={activeAdhanPrayerName}
         selectedVoice={selectedVoice}
         onSelectVoice={(v) => setSelectedVoice(v)}
+      />
+
+      {/* Persistent Mini Adhan Player Bar (keeps playing to completion even if modal is closed) */}
+      <MiniAdhanPlayer
+        onOpenFullModal={() => setIsAdhanModalOpen(true)}
+        isFullModalOpen={isAdhanModalOpen}
       />
     </div>
   );

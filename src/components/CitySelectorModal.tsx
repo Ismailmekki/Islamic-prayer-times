@@ -22,12 +22,14 @@ import {
   Loader2,
   Globe,
 } from 'lucide-react';
-import { CalculationMethodId, JuristicMethod, UserLocation } from '../types/prayer';
+import { CalculationMethodId, JuristicMethod, UserLocation, TimeFormatMode } from '../types/prayer';
 import {
   CALCULATION_METHODS,
   PrayerTimeAdjustments,
   getSavedPrayerAdjustments,
   savePrayerAdjustments,
+  getSavedTimeFormat,
+  saveTimeFormat,
 } from '../utils/prayerTimes';
 import { COUNTRIES_AND_STATES, CountryData, StateOrProvince } from '../data/countriesAndStates';
 import {
@@ -48,6 +50,8 @@ interface CitySelectorModalProps {
   onSelectMethod: (method: CalculationMethodId) => void;
   currentJuristic: JuristicMethod;
   onSelectJuristic: (juristic: JuristicMethod) => void;
+  timeFormatMode?: TimeFormatMode;
+  onToggleTimeFormat?: (mode: TimeFormatMode) => void;
 }
 
 interface PrayerInfoDef {
@@ -98,8 +102,20 @@ export const CitySelectorModal: React.FC<CitySelectorModalProps> = ({
   onSelectMethod,
   currentJuristic,
   onSelectJuristic,
+  timeFormatMode,
+  onToggleTimeFormat,
 }) => {
   const [activeTab, setActiveTab] = useState<'countries' | 'notifications' | 'settings' | 'search' | 'custom_gps'>('countries');
+  const [localTimeFormat, setLocalTimeFormat] = useState<TimeFormatMode>(() => getSavedTimeFormat());
+  const activeTimeFormat = timeFormatMode || localTimeFormat;
+
+  const handleTimeFormatChange = (mode: TimeFormatMode) => {
+    setLocalTimeFormat(mode);
+    saveTimeFormat(mode);
+    if (onToggleTimeFormat) {
+      onToggleTimeFormat(mode);
+    }
+  };
 
   // Detect matching country from current user location instead of hardcoded 'dz'
   const [selectedCountryId, setSelectedCountryId] = useState<string>(() => {
@@ -1128,6 +1144,89 @@ export const CitySelectorModal: React.FC<CitySelectorModalProps> = ({
           {/* TAB 5: Methods & Juristic Settings */}
           {activeTab === 'settings' && (
             <div className="space-y-5">
+              {/* 24-Hour vs 12-Hour vs Système Auto System Setting */}
+              <div className="p-4 rounded-2xl bg-stone-900/90 border border-emerald-500/35 space-y-3 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-emerald-400" />
+                    <span className="font-bold text-xs sm:text-sm text-white">نظام عرض التوقيت (24-Hour / Système / 12h)</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-500/35 font-bold">
+                    {activeTimeFormat === '24h'
+                      ? 'المعتمد: نظام 24 ساعة'
+                      : activeTimeFormat === 'auto'
+                      ? 'المعتمد: الآلي الذكي (Système)'
+                      : 'المعتمد: نظام 12 ساعة'}
+                  </span>
+                </div>
+
+                <p className="text-xs text-stone-300 leading-relaxed">
+                  نظام 24 ساعة هو ميثاق أو عرف زمني يقسم اليوم إلى 24 ساعة، حيث يعتبر منتصف الليل نقطة بداية ونهاية اليوم (من 00:00 إلى 23:59).
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  {/* Option 1: 24-Hour System */}
+                  <button
+                    type="button"
+                    onClick={() => handleTimeFormatChange('24h')}
+                    className={`p-3 rounded-xl text-right text-xs transition-all border cursor-pointer flex flex-col justify-between ${
+                      activeTimeFormat === '24h'
+                        ? 'bg-emerald-950/70 border-emerald-400 text-white shadow-md shadow-emerald-950/60 ring-1 ring-emerald-400/40'
+                        : 'bg-stone-950/70 border-stone-800 text-stone-300 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-bold text-sm text-emerald-300">نظام 24 ساعة</span>
+                      {activeTimeFormat === '24h' && <Check className="w-4 h-4 text-emerald-400" />}
+                    </div>
+                    <span className="text-[11px] text-stone-300 leading-normal">
+                      عرض كامل من 00:00 إلى 23:59 دون ص/م (مثال: الظهر 12:15، العصر 15:45، العشاء 20:00)
+                    </span>
+                  </button>
+
+                  {/* Option 2: Smart Système Auto */}
+                  <button
+                    type="button"
+                    onClick={() => handleTimeFormatChange('auto')}
+                    className={`p-3 rounded-xl text-right text-xs transition-all border cursor-pointer flex flex-col justify-between ${
+                      activeTimeFormat === 'auto'
+                        ? 'bg-emerald-950/70 border-emerald-400 text-white shadow-md shadow-emerald-950/60 ring-1 ring-emerald-400/40'
+                        : 'bg-stone-950/70 border-stone-800 text-stone-300 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1 font-bold text-sm text-emerald-300">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>الآلي الذكي (Système)</span>
+                      </div>
+                      {activeTimeFormat === 'auto' && <Check className="w-4 h-4 text-emerald-400" />}
+                    </div>
+                    <span className="text-[11px] text-stone-300 leading-normal">
+                      يكتشف تلقائياً ضبط نظام هاتفك وجهازك مع تفضيل نظام 24 ساعة المعتمد
+                    </span>
+                  </button>
+
+                  {/* Option 3: 12-Hour System */}
+                  <button
+                    type="button"
+                    onClick={() => handleTimeFormatChange('12h')}
+                    className={`p-3 rounded-xl text-right text-xs transition-all border cursor-pointer flex flex-col justify-between ${
+                      activeTimeFormat === '12h'
+                        ? 'bg-emerald-950/70 border-emerald-400 text-white shadow-md shadow-emerald-950/60 ring-1 ring-emerald-400/40'
+                        : 'bg-stone-950/70 border-stone-800 text-stone-300 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-bold text-sm text-emerald-300">نظام 12 ساعة</span>
+                      {activeTimeFormat === '12h' && <Check className="w-4 h-4 text-emerald-400" />}
+                    </div>
+                    <span className="text-[11px] text-stone-300 leading-normal">
+                      يعرض التوقيت مع ص / م (مثال: الظهر 12:15 م، العصر 3:45 م، الفجر 4:45 ص)
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-stone-300 mb-2">
                   طريقة الحساب الفلكي لمواقيت الصلاة
