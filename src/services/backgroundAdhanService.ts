@@ -702,22 +702,29 @@ class BackgroundAdhanService {
     // 1. Send system lock-screen notification
     this.sendPrayerNotification(prayerName, cityName);
 
-    // 2. Resolve dedicated adhan voice for Fajr, Dhuhr, Asr
+    // 2. Resolve dedicated adhan voice for Fajr, Dhuhr, Asr, Maghrib
     let effectiveVoice = voice;
-    if (prayerName.includes('الظهر')) {
+    if (prayerName.includes('الفجر')) {
+      const fajrV = ADHAN_VOICES.find((v) => v.id === 'fajr_alafasy');
+      if (fajrV) effectiveVoice = fajrV;
+    } else if (prayerName.includes('المغرب')) {
+      const makkahV = ADHAN_VOICES.find((v) => v.id === 'makkah_mulla');
+      if (makkahV) effectiveVoice = makkahV;
+    } else if (prayerName.includes('الظهر')) {
       const dhuhrV = ADHAN_VOICES.find((v) => v.id === 'dhuhr_adhan');
       if (dhuhrV) effectiveVoice = dhuhrV;
     } else if (prayerName.includes('العصر')) {
       const asrV = ADHAN_VOICES.find((v) => v.id === 'asr_adhan');
       if (asrV) effectiveVoice = asrV;
-    } else if (prayerName.includes('الفجر')) {
-      const fajrV = ADHAN_VOICES.find((v) => v.id === 'fajr_alafasy');
-      if (fajrV) effectiveVoice = fajrV;
     }
 
     // 3. Play full Adhan audio with background audio pipeline
     if (this.config.notifyWithFullAudio) {
-      soundService.playAdhan(effectiveVoice.audioUrl);
+      soundService.unlockAudioSession().catch(() => {});
+      soundService.playAdhan(effectiveVoice.audioUrl, {
+        prayerName,
+        reciterTitle: effectiveVoice.reciterArabic,
+      });
     }
 
     // 4. Trigger UI callback

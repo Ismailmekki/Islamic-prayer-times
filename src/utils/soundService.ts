@@ -402,6 +402,15 @@ class SoundService {
         }
         console.warn('Adhan auto-play prevented by browser, launching full synthetic melody:', err);
         this.playSyntheticAdhanMelody();
+        if (typeof window !== 'undefined') {
+          const handleFirstTouch = () => {
+            audio.play().catch(() => {});
+            window.removeEventListener('pointerdown', handleFirstTouch);
+            window.removeEventListener('touchstart', handleFirstTouch);
+          };
+          window.addEventListener('pointerdown', handleFirstTouch, { once: true });
+          window.addEventListener('touchstart', handleFirstTouch, { once: true });
+        }
         if (options?.onError) options.onError(err);
       });
 

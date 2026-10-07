@@ -2,24 +2,6 @@ import { AdhanVoice } from '../types/prayer';
 
 export const ADHAN_VOICES: AdhanVoice[] = [
   {
-    id: 'dhuhr_adhan',
-    titleArabic: 'أذان صلاة الظهر المبارك',
-    reciterArabic: 'أذان ندي خاشع مخصص لوقت الظهر',
-    locationArabic: 'الدوحة / الحرمين الشريفين',
-    audioUrl: '/audio/adhan/dhuhr.mp3',
-    durationText: '2:35',
-    isFajrSpecific: false,
-  },
-  {
-    id: 'asr_adhan',
-    titleArabic: 'أذان صلاة العصر المبارك',
-    reciterArabic: 'أذان ندي خاشع مخصص لوقت العصر',
-    locationArabic: 'الدوحة / الحرمين الشريفين',
-    audioUrl: '/audio/adhan/asr.mp3',
-    durationText: '2:44',
-    isFajrSpecific: false,
-  },
-  {
     id: 'makkah_mulla',
     titleArabic: 'أذان المسجد الحرام (مكة المكرمة)',
     reciterArabic: 'الشيخ علي أحمد ملا (شيخ مؤذني الحرم المكي)',
@@ -44,6 +26,24 @@ export const ADHAN_VOICES: AdhanVoice[] = [
     locationArabic: 'دولة الكويت',
     audioUrl: '/audio/adhan/alafasy.mp3',
     durationText: '4:17',
+    isFajrSpecific: false,
+  },
+  {
+    id: 'dhuhr_adhan',
+    titleArabic: 'أذان صلاة الظهر المبارك',
+    reciterArabic: 'أذان ندي خاشع مخصص لوقت الظهر',
+    locationArabic: 'الدوحة / الحرمين الشريفين',
+    audioUrl: '/audio/adhan/dhuhr.mp3',
+    durationText: '2:35',
+    isFajrSpecific: false,
+  },
+  {
+    id: 'asr_adhan',
+    titleArabic: 'أذان صلاة العصر المبارك',
+    reciterArabic: 'أذان ندي خاشع مخصص لوقت العصر',
+    locationArabic: 'الدوحة / الحرمين الشريفين',
+    audioUrl: '/audio/adhan/asr.mp3',
+    durationText: '2:44',
     isFajrSpecific: false,
   },
   {

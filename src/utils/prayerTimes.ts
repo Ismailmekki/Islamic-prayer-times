@@ -298,23 +298,20 @@ export function calculateDailyPrayerTimes(
   let nightDuration = fixHour(sunriseHour - sunsetHour);
   if (nightDuration <= 0) nightDuration += 24;
 
-  // 1. Fajr calculation with High-Latitude fallback for France and Northern Europe
+  // 1. Fajr calculation with accurate twilight & high-latitude safety
   let fajrHour: number;
   const fajrRes = timeForSunAngle(method.fajrAngle, true);
 
-  if (fajrRes.isExtreme || Math.abs(latitude) >= 48) {
-    // High-Latitude condition (e.g. Paris, Lille, Strasbourg, London during summer)
-    // Use Angle-based portion or 1/7th of night rule
-    const fajrPortion = (method.fajrAngle / 60) * nightDuration;
-    const maxFajrBeforeSunrise = Math.min(fajrPortion, nightDuration / 2);
-    fajrHour = fixHour(sunriseHour - maxFajrBeforeSunrise);
+  if (fajrRes.isExtreme) {
+    // True polar/extreme summer: use 90 minutes before sunrise
+    fajrHour = fixHour(sunriseHour - 1.5);
   } else {
     fajrHour = fajrRes.hour;
-    // Check if Fajr is excessively early (more than half the night before sunrise)
     let fajrInterval = fixHour(sunriseHour - fajrHour);
     if (fajrInterval <= 0) fajrInterval += 24;
-    if (fajrInterval > nightDuration / 2) {
-      fajrHour = fixHour(sunriseHour - (method.fajrAngle / 60) * nightDuration);
+    // Cap at maximum 105 minutes (1.75 hours) before sunrise to prevent absurd early hours
+    if (fajrInterval > 1.75) {
+      fajrHour = fixHour(sunriseHour - 1.5); // 90 min before sunrise
     }
   }
 
@@ -329,27 +326,30 @@ export function calculateDailyPrayerTimes(
   // 3. Maghrib (sunset + 2 min precaution)
   const maghribHour = sunsetHour + 2 / 60;
 
-  // 4. Isha calculation
+  // 4. Isha calculation (Correct, reliable, and strictly fiqh-compliant)
   let ishaHour: number;
-  // Check if Ramadan is active for Umm Al-Qura and Qatar (120 min instead of 90 min)
   const hijriInfo = getHijriDate(date);
   const isRamadan = hijriInfo.monthIndex === 8; // Month 9 (Ramadan, index 8)
 
   if (method.ishaIntervalMinutes) {
+    // Fixed interval methods (e.g. Umm Al-Qura, Qatar: 90 min after Maghrib)
     const ishaMinutes = (method.id === 'MAKKAH' || method.id === 'QATAR') && isRamadan ? 120 : method.ishaIntervalMinutes;
     ishaHour = maghribHour + ishaMinutes / 60;
   } else if (method.ishaAngle) {
     const ishaRes = timeForSunAngle(method.ishaAngle, false);
-    if (ishaRes.isExtreme || Math.abs(latitude) >= 48) {
-      const ishaPortion = (method.ishaAngle / 60) * nightDuration;
-      const maxIshaAfterSunset = Math.min(ishaPortion, nightDuration / 2);
-      ishaHour = fixHour(sunsetHour + maxIshaAfterSunset);
+    if (ishaRes.isExtreme) {
+      // Extreme summer when twilight does not disappear: use 90 minutes (1.5 hours) after Maghrib
+      // according to the European Council for Fatwa and Research (ECFR)
+      ishaHour = maghribHour + 1.5;
     } else {
       ishaHour = ishaRes.hour;
-      let ishaInterval = fixHour(ishaHour - sunsetHour);
+      let ishaInterval = fixHour(ishaHour - maghribHour);
       if (ishaInterval <= 0) ishaInterval += 24;
-      if (ishaInterval > nightDuration / 2) {
-        ishaHour = fixHour(sunsetHour + (method.ishaAngle / 60) * nightDuration);
+      // In Islamic fiqh, the interval between Maghrib and Isha should NEVER exceed 90 to 105 minutes (1.5 to 1.75 hours)
+      if (ishaInterval > 1.75) {
+        ishaHour = maghribHour + 1.5; // Exactly 90 minutes (ساعة ونصف) after Maghrib!
+      } else if (ishaInterval < 1.0) {
+        ishaHour = maghribHour + 1.15; // At least 70 minutes after Maghrib
       }
     }
   } else {
