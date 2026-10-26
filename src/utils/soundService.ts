@@ -43,7 +43,6 @@ class SoundService {
   private masterAudio: HTMLAudioElement | null = null;
   private adhanAudio: HTMLAudioElement | null = null;
   private duaAudio: HTMLAudioElement | null = null;
-  private silentLoopAudio: HTMLAudioElement | null = null;
   private audioContext: AudioContext | null = null;
   private playPromise: Promise<void> | null = null;
   private isUnlocked = false;
@@ -149,16 +148,10 @@ class SoundService {
         source.start(0);
       } catch {}
 
-      // 3. Prime the master audio element with silent data URI
-      const master = this.getMasterAudio();
-      master.src = SILENT_WAV_DATA_URI;
-      master.volume = 0.01;
-      await master.play().catch(() => {});
-
-      // 4. Start continuous background silent loop to keep mobile OS audio session open
+      // 3. Keep the single master audio element looping silently to hold the OS audio session
       this.startSilentKeepAlive();
 
-      // 5. Setup media session with background notification integration
+      // 4. Setup media session with background notification integration
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: 'صلاتي - نداء الصلاة والأذان المبارك',
@@ -185,39 +178,28 @@ class SoundService {
   }
 
   /**
-   * Continuous silent audio loop:
+   * Continuous silent audio loop on the Master Audio Element:
    * Keeps mobile OS (iOS & Android) audio session ALIVE in the background
-   * so timers fire and Adhan plays at full volume even when screen is locked!
+   * so timers fire and Adhan plays without being blocked by browser autoplay!
    */
   public startSilentKeepAlive(): void {
     if (typeof window === 'undefined') return;
     try {
-      if (!this.silentLoopAudio) {
-        let el = document.getElementById('salati-silent-loop-player') as HTMLAudioElement | null;
-        if (!el) {
-          el = document.createElement('audio');
-          el.id = 'salati-silent-loop-player';
-          el.preload = 'auto';
-          el.loop = true;
-          el.setAttribute('playsinline', 'true');
-          el.setAttribute('webkit-playsinline', 'true');
-          el.style.display = 'none';
-          document.body.appendChild(el);
-        }
-        this.silentLoopAudio = el;
+      const master = this.getMasterAudio();
+      // If a real Adhan is playing right now, do not interrupt it with silence
+      if (this.currentState.isPlaying && master.src && !master.src.startsWith('data:audio/wav')) {
+        return;
       }
-      this.silentLoopAudio.src = SILENT_WAV_DATA_URI;
-      this.silentLoopAudio.volume = 0.001;
-      this.silentLoopAudio.play().catch(() => {});
+      master.loop = true;
+      master.src = SILENT_WAV_DATA_URI;
+      master.volume = 0.001;
+      master.play().catch(() => {});
     } catch {}
   }
 
   public stopSilentKeepAlive(): void {
-    if (this.silentLoopAudio) {
-      try {
-        this.silentLoopAudio.pause();
-      } catch {}
-    }
+    // When switching to real Adhan, no need to pause the element,
+    // just change the src and volume directly!
   }
 
   public isAudioSessionUnlocked(): boolean {
@@ -301,8 +283,10 @@ class SoundService {
       onError?: (err: unknown) => void;
     }
   ): HTMLAudioElement {
-    this.stopAdhan();
-    this.stopSilentKeepAlive();
+    if (this.synthCancelFn) {
+      this.synthCancelFn();
+      this.synthCancelFn = null;
+    }
 
     // Trigger haptic vibration on mobile
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -312,9 +296,14 @@ class SoundService {
     }
 
     const audio = this.getMasterAudio();
-    audio.src = url;
-    audio.currentTime = 0;
+    audio.loop = false; // Crucial: Adhan must play once and finish naturally
     audio.volume = 1.0;
+    
+    // Switch source directly on the active pipeline
+    if (!audio.src || (!audio.src.endsWith(url) && audio.src !== url)) {
+      audio.src = url;
+    }
+    audio.currentTime = 0;
 
     const prayerTitle = options?.prayerName || 'الصلاة';
     const reciterText = options?.reciterTitle || 'صوت ندي خاشع';
@@ -422,31 +411,22 @@ class SoundService {
       this.synthCancelFn();
       this.synthCancelFn = null;
     }
-    if (this.adhanAudio) {
-      const audio = this.adhanAudio;
-      if (this.playPromise) {
-        this.playPromise
-          .then(() => {
-            audio.pause();
-            this.updateState({ isPaused: true, isPlaying: false });
-            if ('mediaSession' in navigator) {
-              navigator.mediaSession.playbackState = 'paused';
-            }
-          })
-          .catch(() => {});
-      } else {
+    const audio = this.masterAudio || this.adhanAudio;
+    if (audio) {
+      try {
         audio.pause();
-        this.updateState({ isPaused: true, isPlaying: false });
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = 'paused';
-        }
+      } catch {}
+      this.updateState({ isPaused: true, isPlaying: false });
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused';
       }
     }
   }
 
   public resumeAdhan(): void {
-    if (this.adhanAudio) {
-      this.playPromise = this.adhanAudio.play();
+    const audio = this.masterAudio || this.adhanAudio;
+    if (audio) {
+      this.playPromise = audio.play();
       this.playPromise
         .then(() => {
           this.updateState({ isPaused: false, isPlaying: true });
@@ -463,20 +443,12 @@ class SoundService {
       this.synthCancelFn();
       this.synthCancelFn = null;
     }
-    if (this.adhanAudio) {
-      const audio = this.adhanAudio;
-      if (this.playPromise) {
-        this.playPromise
-          .then(() => {
-            audio.pause();
-            audio.currentTime = 0;
-          })
-          .catch(() => {});
-      } else {
+    const audio = this.masterAudio || this.adhanAudio;
+    if (audio) {
+      try {
         audio.pause();
         audio.currentTime = 0;
-      }
-      this.adhanAudio = null;
+      } catch {}
     }
     this.updateState({
       isPlaying: false,

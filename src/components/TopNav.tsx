@@ -21,15 +21,13 @@ export const TopNav: React.FC<TopNavProps> = ({
   isAdhanPlaying,
 }) => {
   const navItems = [
-    { id: 'prayers', label: 'مواقيت الصلاة' },
-    { id: 'adhkar', label: 'أذكار الصباح والمساء' },
-    { id: 'quran', label: 'القرآن والرقية' },
-    { id: 'radio', label: 'راديو القرآن الكريم' },
-    { id: 'qibla', label: 'القبلة' },
-    { id: 'tasbih', label: 'السبحة الإلكترونية' },
-    { id: 'adhan', label: 'رفع الأذان' },
-    { id: 'ibrahimiya', label: 'الصلاة الإبراهيمية' },
-    { id: 'mosques', label: 'المساجد القريبة' },
+    { id: 'prayers', label: '🕌 مواقيت الصلاة والأذان' },
+    { id: 'qibla', label: '🧭 اتجاه القبلة' },
+    { id: 'quran', label: '📖 القرآن الكريم' },
+    { id: 'adhkar', label: '✨ الأذكار وحصن المسلم' },
+    { id: 'tasbih', label: '📿 السبحة الإلكترونية' },
+    { id: 'radio', label: '📻 راديو القرآن' },
+    { id: 'mosques', label: '📍 المساجد القريبة' },
   ];
 
   return (

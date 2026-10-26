@@ -517,7 +517,7 @@ export function getPrayerList(
   }> = [
     { id: 'fajr', nameArabic: 'الفجر', nameEnglish: 'Fajr', date: times.fajr, isPrayer: true },
     { id: 'sunrise', nameArabic: 'الشروق', nameEnglish: 'Sunrise', date: times.sunrise, isPrayer: false },
-    { id: 'duha', nameArabic: 'الضحى', nameEnglish: 'Duha', date: times.duha, isPrayer: true },
+    { id: 'duha', nameArabic: 'الضحى', nameEnglish: 'Duha', date: times.duha, isPrayer: false },
     isFriday
       ? { id: 'jumuah', nameArabic: 'صلاة الجمعة', nameEnglish: "Jumu'ah", date: times.jumuah, isPrayer: true }
       : { id: 'dhuhr', nameArabic: 'الظهر', nameEnglish: 'Dhuhr', date: times.dhuhr, isPrayer: true },

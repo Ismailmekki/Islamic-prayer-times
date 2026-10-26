@@ -653,12 +653,11 @@ class BackgroundAdhanService {
         }
       }
 
-      // 2. Check Exact Adhan Time (Only for actual prayers)
-      if (!prayer.isPrayer) return;
+      // 2. Check Exact Adhan Time (Only for the 5 daily prayers)
+      if (!prayer.isPrayer || prayer.id === 'sunrise' || prayer.id === 'duha') return;
 
       const isPrayerEnabled =
         (prayer.id === 'fajr' && this.config.fajrEnabled) ||
-        (prayer.id === 'duha' && this.config.duhaEnabled) ||
         (prayer.id === 'dhuhr' && this.config.dhuhrEnabled) ||
         (prayer.id === 'jumuah' && this.config.jumuahEnabled) ||
         (prayer.id === 'asr' && this.config.asrEnabled) ||

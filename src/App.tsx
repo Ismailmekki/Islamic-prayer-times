@@ -285,15 +285,14 @@ export default function App() {
     setIsAdhanModalOpen(true);
   };
 
-  // Mobile Bottom Tab Bar items (Pattern 1 of touch mobile design)
+  // Mobile Bottom Tab Bar items (Clean, comfortable touch targets for elderly)
   const mobileBottomTabs = [
     { id: 'prayers', label: 'المواقيت', icon: Clock },
-    { id: 'adhkar', label: 'الأذكار', icon: Sparkles },
-    { id: 'quran', label: 'القرآن', icon: BookOpen },
-    { id: 'radio', label: 'الراديو', icon: Radio },
     { id: 'qibla', label: 'القبلة', icon: Compass },
+    { id: 'quran', label: 'القرآن', icon: BookOpen },
+    { id: 'adhkar', label: 'الأذكار', icon: Sparkles },
     { id: 'tasbih', label: 'السبحة', icon: CircleDot },
-    { id: 'adhan', label: 'الأذان', icon: Volume2 },
+    { id: 'radio', label: 'الراديو', icon: Radio },
   ];
 
   return (
@@ -328,6 +327,7 @@ export default function App() {
             location={location}
             calculationMethod={calculationMethod}
             selectedVoice={selectedVoice}
+            onSelectVoice={(voice) => setSelectedVoice(voice)}
             onOpenSettings={() => setIsLocationModalOpen(true)}
             onPlayAdhanForPrayer={(prayerName) => handleTriggerAdhan(prayerName)}
             timeFormatMode={timeFormatMode}
@@ -349,7 +349,7 @@ export default function App() {
           <QiblaCompass
             location={location}
             onOpenLocationModal={() => setIsLocationModalOpen(true)}
-            onUpdateLocation={(newLoc) => setLocation(newLoc)}
+            onUpdateLocation={(newLoc: UserLocation) => setLocation(newLoc)}
           />
         )}
 
@@ -386,7 +386,7 @@ export default function App() {
       </footer>
 
       {/* Mobile Fixed Bottom Tab Bar (Thumb Zone) */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-stone-900/95 backdrop-blur-md border-t border-stone-800 grid grid-cols-7 items-center h-16 px-0.5">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-stone-900/95 backdrop-blur-md border-t border-stone-800 grid grid-cols-6 items-center h-16 px-1">
         {mobileBottomTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;
@@ -398,21 +398,21 @@ export default function App() {
                 setCurrentTab(tab.id);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center h-full transition-colors relative ${
+              className={`flex flex-col items-center justify-center h-full transition-colors relative cursor-pointer ${
                 isActive
                   ? isRadio
                     ? 'text-rose-400 font-bold'
-                    : 'text-emerald-400 font-semibold'
+                    : 'text-emerald-400 font-black'
                   : 'text-stone-400 hover:text-stone-200'
               }`}
             >
               <div className="relative">
-                <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
+                <Icon className="w-5 h-5" />
                 {isRadio && (
                   <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                 )}
               </div>
-              <span className="text-[9px] sm:text-[10px] mt-1 tracking-tight truncate max-w-[46px]">
+              <span className="text-[10px] sm:text-[11px] mt-1 font-bold tracking-tight truncate max-w-[56px]">
                 {tab.label}
               </span>
             </button>
